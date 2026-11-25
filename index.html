@@ -290,6 +290,10 @@
             <span class="ttablist"></span>
             <button class="tnew icon" title="New session to this server">＋</button>
             <span class="grow"></span>
+            <span class="tcount muted"></span>
+            <span class="tstep"><button class="tprev" title="Previous match (Shift+Enter, ↑)" disabled>▲</button><button class="tnext" title="Next match (Enter, ↓)" disabled>▼</button></span>
+            <input class="tsearch" type="search" placeholder="Terminal Search" title="Search the terminal (Cmd/Ctrl+F). Enter = next, Shift+Enter = previous, Esc = clear">
+            <select class="tscope" title="Where to search"><option value="cur">Current Tab</option><option value="all">All Tabs</option></select>
             <button class="tscripts" title="Show scripts">{ } Scripts</button>
           </div>
           <div class="thosts"><p class="tempty empty" hidden>No open sessions. Click ＋ to start one.</p></div>
@@ -555,6 +559,7 @@
       <header class="dlghead"><b>EranTerm &nbsp;Settings</b><button value="cancel" formnovalidate class="icon" title="Close without saving">✕</button></header>
       <nav class="stabs">
         <button type="button" data-tab="general">General</button>
+        <button type="button" data-tab="appearance">Appearance</button>
         <button type="button" data-tab="account">Account</button>
         <button type="button" data-tab="team" hidden>Team</button>
         <button type="button" data-tab="avail">Server Availability</button>
@@ -572,6 +577,21 @@
         <select name="defaultPanel"><option value="files">File Manager</option><option value="term">Terminal</option><option value="logs">Logs</option><option value="stats">Metrics</option></select>
       </label>
       <label class="row"><input name="restoreTabs" type="checkbox"> Reopen the open server tabs when the app starts</label>
+      </section>
+      <section class="spane appear" data-pane="appearance" hidden>
+      <h4>Terminal</h4>
+      <label class="row"><input name="termBgOn" type="checkbox"> Background <input name="termBg" type="color"></label>
+      <label class="row"><input name="termFgOn" type="checkbox"> Text color <input name="termFg" type="color"></label>
+      <label class="row">Font size <input name="termSize" type="number" min="8" max="32"> px</label>
+      <h4>Logs</h4>
+      <label class="row"><input name="logSame" type="checkbox"> Same as terminal</label>
+      <fieldset class="aplog">
+      <label class="row"><input name="logBgOn" type="checkbox"> Background <input name="logBg" type="color"></label>
+      <label class="row"><input name="logFgOn" type="checkbox"> Text color <input name="logFg" type="color"></label>
+      <label class="row">Font size <input name="logSize" type="number" min="8" max="32"> px</label>
+      </fieldset>
+      <p class="hint">Unticked colors follow the light / dark theme. Warning and error lines in Logs keep their own colors.</p>
+      <button type="button" id="appearReset" class="sm">Reset to defaults</button>
       </section>
       <section class="spane" data-pane="account" hidden>
       <div id="acctBox"></div>

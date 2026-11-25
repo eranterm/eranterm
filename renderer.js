@@ -116,6 +116,15 @@ function show(id) {
   else views.get(id)?.onShow();
 }
 $('#homeTab').onclick = () => show('home');
+// Cmd+F (Mac) / Ctrl+F: jump to the Terminal Search box while a server's Terminal panel is showing
+// (capture phase, so xterm doesn't also send ^F to the shell).
+document.addEventListener('keydown', e => {
+  if (e.key.toLowerCase() !== 'f' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  const v = views.get(shownId);
+  if (!v?.focusSearch || v.root.querySelector('.panel.term')?.hidden !== false) return;
+  e.preventDefault(); e.stopPropagation();
+  v.focusSearch();
+}, true);
 
 // Server tab + page header follow the server's group (name chip, gentle color). Re-run when groups change.
 function paintTabs() {
@@ -812,18 +821,36 @@ $('#addUserBtn').onclick = () => editUser();
 // ================= theme =================
 // ponytail: theme lives in localStorage (per-machine UI preference); falls back to System if storage is unavailable.
 const darkMq = matchMedia('(prefers-color-scheme: dark)');
-const allTerms = new Set(); // every xterm, so a theme switch restyles open sessions too
+const allTerms = new Map(); // every xterm -> its refit, so a theme/appearance change restyles open sessions too
 const getThemePref = () => { try { return localStorage.getItem('theme') || 'system'; } catch { return 'system'; } };
 const isLight = () => document.documentElement.dataset.theme === 'light';
-const termTheme = () => (isLight()
+// Settings → Appearance. ponytail: per-machine like the theme (localStorage); '' color = follow light/dark theme.
+const APPEAR_DEF = { termBg: '', termFg: '', termSize: 13, logSame: true, logBg: '', logFg: '', logSize: 12 };
+const getAppear = () => { try { return { ...APPEAR_DEF, ...JSON.parse(localStorage.getItem('appearance') || '{}') }; } catch { return { ...APPEAR_DEF }; } };
+let appear = getAppear();
+const MINI_FONT = 5; // Broadcast minimized panes keep their tiny font
+const termBase = () => (isLight()
   ? { background: '#ffffff', foreground: '#1d2127', cursor: '#1a9a3a', cursorAccent: '#ffffff', selectionBackground: '#1a9a3a40' }
   : { background: '#0b0d10', foreground: '#e3e6eb', cursor: '#3ddc5f', cursorAccent: '#0b0d10', selectionBackground: '#3ddc5f55' });
+const termTheme = () => {
+  const t = termBase();
+  if (appear.termBg) t.background = t.cursorAccent = appear.termBg;
+  if (appear.termFg) t.foreground = appear.termFg;
+  return t;
+};
 function applyTheme() {
   const pref = getThemePref();
   document.documentElement.dataset.theme = pref === 'system' ? (darkMq.matches ? 'dark' : 'light') : pref;
-  for (const term of allTerms) {
-    if (term.element?.isConnected) term.options.theme = termTheme();
-    else allTerms.delete(term); // disposed / closed
+  const tt = termTheme(), s = document.documentElement.style;
+  // Logs: "Same as terminal" copies the terminal's actual look, defaults included.
+  const [bg, fg, size] = appear.logSame ? [tt.background, tt.foreground, appear.termSize] : [appear.logBg, appear.logFg, appear.logSize];
+  bg ? s.setProperty('--log-bg', bg) : s.removeProperty('--log-bg');
+  fg ? s.setProperty('--log-fg', fg) : s.removeProperty('--log-fg');
+  s.setProperty('--log-size', size + 'px');
+  for (const [term, refit] of allTerms) {
+    if (!term.element?.isConnected) { allTerms.delete(term); continue; } // disposed / closed
+    term.options.theme = tt;
+    if (term.options.fontSize !== MINI_FONT && term.options.fontSize !== appear.termSize) { term.options.fontSize = appear.termSize; refit(); }
   }
 }
 darkMq.addEventListener('change', applyTheme);
@@ -860,6 +887,7 @@ async function openSettings(focusKey = false) {
   f.elements.notify.checked = notifyOn();
   f.elements.defaultPanel.value = defaultPanel();
   f.elements.restoreTabs.checked = restoreTabsOn();
+  fillAppear(f.elements, appear);
   $('#updHint').textContent = `You have version ${aiSettings.version}. Checks at startup and every 6 hours. Help → Check for Updates… checks now.`;
   f.elements.aiProvider.replaceChildren(...Object.entries(aiSettings.providers)
     .map(([value, d]) => el('option', { value, textContent: d.label + (d.hasKey ? '  ✓' : '') })));
@@ -1035,6 +1063,31 @@ function showAiError(target, err) {
 // Preview the theme while the dialog is open; Cancel/Esc restores the saved one.
 $('#settingsForm').elements.theme.onchange = e => { document.documentElement.dataset.theme =
   e.target.value === 'system' ? (darkMq.matches ? 'dark' : 'light') : e.target.value; };
+// Appearance tab: unticked colors show the theme default; any change previews live (Cancel/Esc restores).
+const fontPx = (v, d) => Math.min(32, Math.max(8, Math.round(Number(v)) || d));
+function fillAppear(f, a) {
+  const tb = termBase(), cs = getComputedStyle(document.documentElement);
+  for (const [k, def] of [['termBg', tb.background], ['termFg', tb.foreground],
+    ['logBg', cs.getPropertyValue('--bg').trim()], ['logFg', cs.getPropertyValue('--fg').trim()]]) {
+    f[k + 'On'].checked = !!a[k];
+    f[k].value = a[k] || def;
+  }
+  f.termSize.value = a.termSize; f.logSize.value = a.logSize;
+  f.logSame.checked = a.logSame;
+  $('#settingsForm .aplog').disabled = a.logSame;
+}
+const readAppear = f => ({
+  termBg: f.termBgOn.checked ? f.termBg.value : '', termFg: f.termFgOn.checked ? f.termFg.value : '',
+  termSize: fontPx(f.termSize.value, APPEAR_DEF.termSize), logSame: f.logSame.checked,
+  logBg: f.logBgOn.checked ? f.logBg.value : '', logFg: f.logFgOn.checked ? f.logFg.value : '',
+  logSize: fontPx(f.logSize.value, APPEAR_DEF.logSize),
+});
+const previewAppear = () => { const f = $('#settingsForm').elements; appear = readAppear(f); $('#settingsForm .aplog').disabled = appear.logSame; applyTheme(); };
+$('#settingsForm .appear').addEventListener('input', e => {
+  if (e.target.type === 'color') e.target.form.elements[e.target.name + 'On'].checked = true; // picking a color turns it on
+  previewAppear();
+});
+$('#appearReset').onclick = () => { fillAppear($('#settingsForm').elements, APPEAR_DEF); previewAppear(); };
 // Messages inside the dialog (it no longer closes on a failed save).
 const aiMsg = (text, kind = '') => { $('#aiMsg').textContent = text; $('#aiMsg').className = 'hint ' + kind; };
 const aiNoKeyText = e => cleanErr(e).replace(/^NO_API_KEY:\s*/, '').replace(/\s*(Update it|Add one)? ?in Settings → AI configuration\./, ' Check the key and try again.');
@@ -1059,13 +1112,13 @@ $('#settingsForm').addEventListener('submit', async e => {
       await api.settings.setAvail({ on: f.availOn.checked, intervalSec: f.availSec.value });
     }
     if (f.notify.checked && Notification.permission === 'default') Notification.requestPermission();
-    try { localStorage.setItem('theme', f.theme.value); localStorage.setItem('notify', f.notify.checked ? 'on' : 'off'); localStorage.setItem('defaultPanel', f.defaultPanel.value); localStorage.setItem('restoreTabs', f.restoreTabs.checked ? 'on' : 'off'); } catch { /* ignore */ }
+    try { localStorage.setItem('theme', f.theme.value); localStorage.setItem('notify', f.notify.checked ? 'on' : 'off'); localStorage.setItem('defaultPanel', f.defaultPanel.value); localStorage.setItem('restoreTabs', f.restoreTabs.checked ? 'on' : 'off'); localStorage.setItem('appearance', JSON.stringify(readAppear(f))); } catch { /* ignore */ }
     $('#settingsDlg').close('save');
     toast(`Settings saved. AI: ${aiSettings.providers[f.aiProvider.value].label}`);
   } catch (err) {
     aiMsg(aiNoKeyText(err), 'error');  } finally { btn.disabled = false; }
 });
-$('#settingsDlg').addEventListener('close', applyTheme);
+$('#settingsDlg').addEventListener('close', () => { appear = getAppear(); applyTheme(); });
 
 $('#aiLoadModels').onclick = async () => {
   const f = $('#settingsForm').elements;
@@ -1128,10 +1181,10 @@ function pushHist(serverId, cmd) {
 // opts.input(data): where typed keys go (Broadcast sends them to many shells); default: this shell.
 function makeTerm(host, connId, cwd, serverId, opts = {}) {
   const term = new Terminal({
-    cursorBlink: true, fontSize: 13, fontFamily: 'Menlo, monospace',
+    cursorBlink: true, fontSize: appear.termSize, fontFamily: 'Menlo, monospace',
     theme: termTheme(),
   });
-  allTerms.add(term);
+  allTerms.set(term, () => refit());
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(host);
@@ -1230,6 +1283,50 @@ function makeTerm(host, connId, cwd, serverId, opts = {}) {
     api.ssh.resize(id, term.cols, term.rows); // size may have changed while the shell was opening
   }, e => term.writeln(`\x1b[31m${cleanErr(e)}\x1b[0m`));
   t.run = async cmd => { await t.ready; if (t.id) api.ssh.write(t.id, cmd); };
+  // ---- search: highlight every hit and put a red line on its row in the scrollbar ----
+  let hits = [], needleLen = 0, at = -1;
+  const rule = el('div', { className: 'srule' }); // red ticks over the scrollbar, one per hit row
+  const layer = el('div', { className: 'shl' });  // yellow boxes over the visible hits (own overlay: no xterm decoration API)
+  host.append(rule, layer);
+  function paint() {
+    layer.replaceChildren();
+    const screen = term.element?.querySelector('.xterm-screen');
+    if (!hits.length || !screen) return;
+    const hr = host.getBoundingClientRect(), sr = screen.getBoundingClientRect();
+    if (!sr.width || !term.cols) return;
+    const cw = sr.width / term.cols, ch = sr.height / term.rows, vy = term.buffer.active.viewportY;
+    hits.forEach((h, i) => {
+      if (h.y < vy || h.y >= vy + term.rows) return;
+      layer.append(el('i', { className: i === at ? 'cur' : '', style:
+        `left:${sr.left - hr.left + h.x * cw}px;top:${sr.top - hr.top + (h.y - vy) * ch}px;width:${needleLen * cw}px;height:${ch}px` }));
+    });
+  }
+  term.onScroll(paint); term.onResize(paint);
+  term.onWriteParsed(() => { if (hits.length) requestAnimationFrame(paint); });
+  t.clearSearch = () => { hits = []; at = -1; rule.replaceChildren(); layer.replaceChildren(); };
+  t.hitCount = () => hits.length;
+  t.search = str => { // case-insensitive substring; returns the number of hits (capped)
+    t.clearSearch();
+    const needle = str.toLowerCase();
+    if (!needle) return 0;
+    needleLen = needle.length;
+    const b = term.buffer.active, ticks = new Set();
+    for (let y = 0; y < b.length && hits.length < 2000; y++) {
+      const text = b.getLine(y)?.translateToString(true).toLowerCase() ?? '';
+      for (let x = text.indexOf(needle); x >= 0 && hits.length < 2000; x = text.indexOf(needle, x + needleLen)) { hits.push({ y, x }); ticks.add(y); }
+    }
+    rule.replaceChildren(...[...ticks].map(y => el('i', { style: `top:${(y / b.length) * 100}%` })));
+    paint();
+    return hits.length;
+  };
+  // step to the next (dir 1) or previous (-1) hit, wrapping; returns its 1-based number (0 = none)
+  t.jump = dir => {
+    if (!hits.length) return 0;
+    at = (at + dir + hits.length) % hits.length;
+    term.scrollToLine(Math.max(0, hits[at].y - 3));
+    paint();
+    return at + 1;
+  };
   t.refit = refit;
   t.dispose = () => {
     ro.disconnect();
@@ -1524,7 +1621,7 @@ function bcastRestore() {
 // Minimized view: small panes and tiny text; double-click one to enlarge it (one at a time).
 const bcastFont = p => {
   if (!p.t) return;
-  p.t.term.options.fontSize = bcast.mini && !p.el.classList.contains('big') ? 5 : 13;
+  p.t.term.options.fontSize = bcast.mini && !p.el.classList.contains('big') ? MINI_FONT : appear.termSize;
   p.t.refit();
 };
 function bcastMini() {
@@ -1704,6 +1801,46 @@ function closeServer(serverId) {
   show('home');
 }
 
+// Right-click on a server tab.
+function serverDetails(s) {
+  const a = avail[s.id], e = envById(envOfServer(s));
+  const rows = [['Name', s.name], ['Host', s.host], ['User', s.username], ['Port', s.port], ['Type', !s.local && typeOf(s).toUpperCase()],
+    ['Group', s.group], ['Environment', e && `${envIcon(e)} ${e.name}`], ['Tags', s.tags?.join(', ')], ['OS', s.os], ['Details', s.details],
+    ['Reachable', a && `${a.server === 'up' ? 'yes' : 'no'} · checked ${new Date(a.at).toLocaleString()}`]].filter(r => r[1]);
+  ask({ title: s.name, ok: 'Close', body: el('table', { className: 'kv' },
+    ...rows.map(([k, val]) => el('tr', {}, el('td', { className: 'muted', textContent: k }), el('td', { className: 'mono', textContent: String(val) })))) });
+}
+async function tabMenu(sid) {
+  const v = views.get(sid), s = servers.find(x => x.id === sid) || v.server;
+  const ids = tabIds(), i = ids.indexOf(sid), failed = [...views.values()].filter(x => x.failed).length;
+  const pick = await api.menu([
+    { id: 'details', label: 'Get server details' },
+    { id: 'edit', label: 'Edit Server', enabled: !s.local },
+    { sep: true },
+    { id: 'reconnect', label: 'Reconnect', enabled: !v.connId || v.failed },
+    { id: 'failed', label: `Reconnect failed${failed ? ` (${failed})` : ''}`, enabled: !!failed },
+    { sep: true },
+    { id: 'close', label: `Close ${s.name}` },
+    { id: 'all', label: 'Close all' },
+    { id: 'others', label: 'Close other tabs', enabled: ids.length > 1 },
+    { id: 'right', label: 'Close tabs to the right', enabled: i < ids.length - 1 },
+    { sep: true },
+    { id: 'appearance', label: 'Appearance…' },
+  ]);
+  const closeMany = list => { const cur = shownId; list.forEach(closeServer); if (views.has(cur)) show(cur); };
+  ({
+    details: () => serverDetails(s),
+    edit: () => editServer(s),
+    reconnect: () => reconnect(sid),
+    failed: () => $('#reconnAll').click(),
+    close: () => closeServer(sid),
+    all: () => closeMany(ids),
+    others: () => closeMany(ids.filter(x => x !== sid)),
+    right: () => closeMany(ids.slice(i + 1)),
+    appearance: async () => { await openSettings(); settingsTab('appearance'); },
+  })[pick]?.();
+}
+
 async function openServer(s) {
   if (views.has(s.id)) return show(s.id);
 
@@ -1716,6 +1853,7 @@ async function openServer(s) {
   $('#tabs .tabtools').before(tabEl);
 
   tabEl.dataset.sid = s.id;
+  tabEl.oncontextmenu = e => { e.preventDefault(); tabMenu(s.id); };
   const v = { root, tabEl, connId: null, panel: 'files', server: s, failed: false };
   views.set(s.id, v);
   saveTabs();
@@ -1767,13 +1905,51 @@ async function openServer(s) {
       iconBtn('×', 'Close session', () => closeSession(sess), 'x'));
     q('.ttablist').append(sess.tabEl);
     sess.t = makeTerm(host, v.connId, cwd, s.id);
+    sess.t.term.onWriteParsed(() => { if (q('.tsearch').value) runSearch(); }); // new output may contain hits
     sessions.push(sess);
     activateSession(sess);
     return sess;
   }
 
+  // ---- terminal search (Current Tab / All Tabs) ----
+  let searchTimer = 0;
+  function runSearch(jump = false) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      const str = q('.tsearch').value, all = q('.tscope').value === 'all';
+      let total = 0;
+      for (const x of sessions) {
+        const n = str && (all || x === active) ? x.t.search(str) : (x.t.clearSearch(), 0);
+        x.tabEl.classList.toggle('hit', n > 0 && all);
+        x.tabEl.title = n > 0 && all ? `${n} match${n > 1 ? 'es' : ''}` : '';
+        if (x === active || all) total += n;
+      }
+      lastTotal = total;
+      showCount(jump && active ? active.t.jump(1) : 0);
+    }, jump ? 0 : 200);
+  }
+  let lastTotal = 0;
+  const showCount = n => {
+    const str = q('.tsearch').value, mine = active ? active.t.hitCount() : 0;
+    q('.tcount').textContent = !str ? '' : !lastTotal ? 'No matches'
+      : q('.tscope').value === 'all' ? `${n ? n + ' of ' + mine : mine + ' here'} · ${lastTotal} total` : `${n ? n + ' of ' + mine : mine + ' match' + (mine === 1 ? '' : 'es')}`;
+    q('.tprev').disabled = q('.tnext').disabled = !mine;
+  };
+  const step = dir => active && showCount(active.t.jump(dir));
+  q('.tprev').onclick = () => step(-1);
+  q('.tnext').onclick = () => step(1);
+  q('.tsearch').oninput = () => runSearch(true);
+  q('.tscope').onchange = () => runSearch();
+  q('.tsearch').onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); step(e.key === 'ArrowDown' ? 1 : -1); }
+    if (e.key === 'Escape') { q('.tsearch').value = ''; runSearch(); active?.t.term.focus(); }
+  };
+  v.focusSearch = () => { q('.tsearch').focus(); q('.tsearch').select(); };
+
   function activateSession(sess) {
     active = sess;
+    if (q('.tsearch').value) runSearch();
     for (const x of sessions) {
       x.host.hidden = x !== sess;
       x.tabEl.classList.toggle('active', x === sess);

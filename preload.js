@@ -4,6 +4,7 @@ const on = ch => cb => ipcRenderer.on(ch, (_e, ...a) => cb(...a));
 
 contextBridge.exposeInMainWorld('api', {
   pathForFile: f => webUtils.getPathForFile(f), // drag & drop upload
+  menu: items => ipcRenderer.invoke('menu:popup', items), // native right-click menu: [{ id, label, enabled } | { sep: true }]
   servers: {
     list: () => ipcRenderer.invoke('servers:list'),
     save: s => ipcRenderer.invoke('servers:save', s),

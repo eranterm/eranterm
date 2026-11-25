@@ -18,7 +18,8 @@ jobs:
       matrix:
         # macos-15-intel: GitHub's arm64 macOS runners often have no capacity (job cancelled after 15 min unstarted).
         # The Mac build makes both arm64 and x64 files (package.json build.mac), so an Intel runner gives the same output.
-        os: [macos-15-intel, windows-latest]
+        # Windows paused (no Windows builds or releases until further notice): add windows-latest back to resume.
+        os: [macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

@@ -217,6 +217,13 @@ function openManual(hash, page = 'manual.html') {
   manualWin.loadFile(page, hash ? { hash } : undefined);
 }
 ipcMain.handle('help:manual', (_e, hash) => openManual(hash));
+// Native context menu; resolves the clicked item's id (null when dismissed).
+ipcMain.handle('menu:popup', (e, items) => new Promise(res => {
+  let picked = null;
+  Menu.buildFromTemplate(items.map(i => (i.sep ? { type: 'separator' }
+    : { label: i.label, enabled: i.enabled !== false, click: () => { picked = i.id; } })))
+    .popup({ window: BrowserWindow.fromWebContents(e.sender), callback: () => setImmediate(() => res(picked)) });
+}));
 function showVersion() {
   dialog.showMessageBox(win, {
     message: `EranTerm ${app.getVersion()}`,
