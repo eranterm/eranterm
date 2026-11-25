@@ -1,32 +1,52 @@
 name: Build installers
 
+# PR into main (opened / new commits): test + build installers (downloadable from the run, no release).
+# PR merged into main: build again from the merge commit and publish a GitHub Release.
+# Direct pushes (to dev or main) do nothing.
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, closed]
 
 permissions:
   contents: write
 
 jobs:
   build:
+    if: github.event.action != 'closed' || github.event.pull_request.merged
     strategy:
       matrix:
-        os: [macos-latest, windows-latest]
+        # macos-15-intel: GitHub's arm64 macOS runners often have no capacity (job cancelled after 15 min unstarted).
+        # The Mac build makes both arm64 and x64 files (package.json build.mac), so an Intel runner gives the same output.
+        os: [macos-15-intel, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merged && github.event.pull_request.merge_commit_sha || '' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
-      # ponytail: build number = run number, never committed back (no bot pushes / loops).
-      # Bump major.minor in package.json by hand; the patch comes from CI.
+      # Google sign-in client (not in git): the client's "Download JSON", stored as the GOOGLE_OAUTH_JSON secret.
+      # Without the secret the build still works; sign-in just says it is not set up.
+      - name: Google OAuth client
+        shell: bash
+        env:
+          GOOGLE_OAUTH_JSON: ${{ secrets.GOOGLE_OAUTH_JSON }}
+        run: '[ -z "$GOOGLE_OAUTH_JSON" ] || printf "%s" "$GOOGLE_OAUTH_JSON" > google-oauth.json'
+      # package.json holds the last released version; a release is that + 1 patch (the release job commits
+      # it back to main and dev). PR test builds are tagged as prereleases of the next version: 0.1.7-pr.12.
+      # Bump major/minor by editing package.json by hand (e.g. 0.2.0 -> next release 0.2.1).
       - name: Set version
         shell: bash
-        run: npm version "$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}" --no-git-tag-version
-      - run: npx electron-builder ${{ matrix.os == 'macos-latest' && '--mac' || '--win' }} --publish never
+        run: |
+          NEXT="$(node -p "const [a,b,c]=require('./package.json').version.split('.'); [a,b,+c+1].join('.')")"
+          ${{ github.event.pull_request.merged && 'true' || 'false' }} || NEXT="$NEXT-pr.${{ github.event.number }}"
+          npm version "$NEXT" --no-git-tag-version
+      - run: npx electron-builder ${{ startsWith(matrix.os, 'macos') && '--mac' || '--win' }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false # unsigned; drop this once you add signing certs
       - uses: actions/upload-artifact@v4
@@ -42,16 +62,33 @@ jobs:
 
   release:
     needs: build
+    if: github.event.pull_request.merged
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
+      # Same version the build job stamped. Pushes made with GITHUB_TOKEN don't trigger workflows (no loop).
+      - name: Commit version to main and dev
+        run: |
+          V="$(node -p "const [a,b,c]=require('./package.json').version.split('.'); [a,b,+c+1].join('.')")"
+          echo "V=$V" >> "$GITHUB_ENV"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for B in main dev; do
+            git ls-remote --exit-code --heads origin "$B" >/dev/null || continue
+            git checkout -q -B "$B" "origin/$B"
+            npm version "$V" --no-git-tag-version --allow-same-version >/dev/null
+            git commit -qam "Release v$V" || true
+            git push origin "$B"
+            if [ "$B" = main ]; then echo "TAG_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"; fi  # `[ ] &&` as the loop's last command fails the step on dev
+          done
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          V="$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')").${{ github.run_number }}"
-          gh release create "v$V" out/* --title "EranTerm $V" --generate-notes --target "${{ github.sha }}"
+        run: gh release create "v$V" out/* --title "EranTerm $V" --generate-notes --target "$TAG_SHA"

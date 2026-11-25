@@ -1,7 +1,7 @@
 {
   "name": "eraterm",
   "productName": "EranTerm",
-  "version": "0.1.0",
+  "version": "0.1.12",
   "private": true,
   "description": "Local-first desktop SSH server manager with an approve-before-run AI terminal",
   "main": "main.js",
@@ -17,13 +17,17 @@
       "*.js",
       "!*.test.js",
       "index.html",
+      "debug.html",
       "manual.html",
-      "style.css"
+      "privacy.html",
+      "terms.html",
+      "style.css",
+      "google-oauth.json"
     ],
     "publish": {
       "provider": "github",
-      "owner": "erancohen-cr",
-      "repo": "EranTerm"
+      "owner": "eranterm",
+      "repo": "eranterm"
     },
     "mac": {
       "target": [

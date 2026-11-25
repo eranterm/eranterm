@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="google-site-verification" content="vwmGQs085jTIDIp28_1wSs1nNcBhK_UeXcrN_DNOzYY" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'">
+<title>EranTerm</title>
+<meta name="description" content="EranTerm: a local-first desktop SSH manager with terminals, SFTP, log tailing and an approve-before-run AI assistant.">
+<style>
+  :root { --bg: #0b0d10; --panel: #111418; --line: #232830; --fg: #e3e6eb; --muted: #9aa3ad; --accent: #3ddc5f; color-scheme: dark; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f7f9; --panel: #fff; --line: #d9dde3; --fg: #1d2127; --muted: #4f5864; --accent: #1a9a3a; color-scheme: light; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 -apple-system, system-ui, sans-serif; }
+  a { color: var(--accent); }
+  header.top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 8px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header.top .logo { font-weight: 700; font-size: 18px; letter-spacing: -.02em; color: var(--fg); text-decoration: none; }
+  header.top .logo span { color: var(--accent); }
+  header.top .menu { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+  header.top .menu a { color: var(--fg); border-radius: 6px; padding: 4px 10px; text-decoration: none; }
+  header.top .menu a:hover { background: var(--bg); color: var(--accent); }
+
+  main { max-width: 860px; margin: 0 auto; padding: 0 24px 60px; }
+  .hero { text-align: center; padding: 64px 0 32px; }
+  .hero h1 { font-size: 40px; letter-spacing: -.02em; margin: 0 0 12px; }
+  .hero h1 span { color: var(--accent); }
+  .hero p { color: var(--muted); max-width: 560px; margin: 0 auto 24px; font-size: 16px; }
+  .cta { display: inline-flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .btn { display: inline-block; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: #06220f; }
+  .btn.secondary { background: var(--panel); border: 1px solid var(--line); color: var(--fg); }
+
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 40px 0; }
+  .features .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .features .card h3 { margin: 0 0 6px; font-size: 15px; }
+  .features .card p { margin: 0; color: var(--muted); font-size: 13px; }
+
+  footer { border-top: 1px solid var(--line); margin-top: 40px; padding: 20px 24px; color: var(--muted); font-size: 13px; text-align: center; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="index.html">Eran<span>Term</span></a>
+  <span class="menu">
+    <a href="help.html">Help</a>
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="terms.html">Terms &amp; Conditions</a>
+    <a href="https://github.com/eranterm/eranterm">GitHub</a>
+  </span>
+</header>
+<main>
+  <div class="hero">
+    <h1>Eran<span>Term</span></h1>
+    <p>A local-first desktop SSH manager for your servers: terminals, an SFTP file manager with drag &amp; drop, live log tailing, and an AI assistant that only runs commands you approve.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/eranterm/eranterm/releases">Download latest release</a>
+      <a class="btn secondary" href="help.html">Read the help</a>
+    </div>
+  </div>
+
+  <div class="features">
+    <div class="card"><h3>Home</h3><p>All your servers in one table: search, favorites, groups, availability checks.</p></div>
+    <div class="card"><h3>File Manager</h3><p>Browse, upload/download with drag &amp; drop, folders as tar.gz, open a side terminal anywhere.</p></div>
+    <div class="card"><h3>Terminal</h3><p>Full xterm shell with AI command suggestions — nothing runs until you approve it.</p></div>
+    <div class="card"><h3>Logs &amp; Metrics</h3><p>Live tailing with level colours and search, plus CPU/memory/disk alerts.</p></div>
+    <div class="card"><h3>Scripts &amp; Deployments</h3><p>Reusable scripts with variables, broadcast to many servers, and deployment tracking.</p></div>
+    <div class="card"><h3>No central backend</h3><p>Runs locally. Optional Google sign-in backs your config up to your own Drive — nothing passes through our servers.</p></div>
+  </div>
+</main>
+<footer>
+  EranTerm &middot; <a href="mailto:eranterm@gmail.com">eranterm@gmail.com</a> &middot;
+  <a href="https://github.com/eranterm/eranterm">GitHub</a> &middot;
+  <a href="privacy.html">Privacy</a> &middot;
+  <a href="terms.html">Terms</a>
+</footer>
+</body>
+</html>

@@ -1,4 +1,4 @@
-/* global api, Terminal, FitAddon, shq, logLevel, parseLogTime, logRowVisible, fileKind */
+/* global api, Terminal, FitAddon, shq, logLevel, parseLogTime, logRowVisible, fileKind, parseVars, varsText, fillVars, scriptKeys */
 
 // Outline file-manager icons (stroke only, 1em, colored via CSS by kind).
 const FILE_ICONS = {
@@ -32,6 +32,26 @@ const el = (tag, props = {}, ...kids) => {
 const iconBtn = (text, title, fn, cls = 'icon') =>
   el('button', { className: cls, title, textContent: text, onclick: e => { e.stopPropagation(); fn(); } });
 const cleanErr = e => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+// ---- Google account / team: shared helpers (Settings → Account / Team; also used by deployments.js) ----
+let acctInfo = { signedIn: false, role: 'none', team: null };
+const loadAcct = async () => { try { acctInfo = await api.account.get(); } catch { /* keep the last known state */ } paintAcct(); return acctInfo; };
+const teamAdmin = () => ['owner', 'admin'].includes(acctInfo.role);
+const canEdit = x => !x?.team || teamAdmin(); // team items: admins only
+const teamBadge = x => (x?.team ? el('span', { className: 'team-badge', textContent: 'Team', title: 'Shared with your team' }) : null);
+// Team item → "Copy to personal"; your own item (team admins only) → "Publish to team". after() reloads the list.
+function teamBtns(kind, x, after, mk = iconBtn) {
+  if (x.team) {
+    return [mk('⧉', 'Copy to personal: your own editable copy', async () => {
+      try { toast(`Copied to your items: ${await api.team.copyToPersonal(kind, x.id)}`); after(); } catch (e) { toast(cleanErr(e), true); }
+    })];
+  }
+  if (!teamAdmin()) return [];
+  return [mk('⇪', 'Publish to team: moves it to the team workspace', async () => {
+    if (!confirm(`Publish "${x.name}" to the team?\n\nEveryone on the team will see and use it; only team admins can change it. Passwords stay on this computer.`)) return;
+    try { await api.team.publish(kind, x.id); toast(`"${x.name}" is now a team item`); after(); } catch (e) { toast(cleanErr(e), true); }
+  })];
+}
 const ago = t => {
   if (!t) return '—';
   const s = (Date.now() - t) / 1000;
@@ -83,7 +103,9 @@ document.addEventListener('drop', e => e.preventDefault());
 const views = new Map(); // serverId -> server view
 let deploys; // home Deployments panel, built on first visit
 
+let shownId = 'home';
 function show(id) {
+  shownId = id;
   $('#home').hidden = id !== 'home';
   $('#homeTab').classList.toggle('active', id === 'home');
   for (const [sid, v] of views) {
@@ -95,8 +117,74 @@ function show(id) {
 }
 $('#homeTab').onclick = () => show('home');
 
+// Server tab + page header follow the server's group (name chip, gentle color). Re-run when groups change.
+function paintTabs() {
+  for (const [sid, v] of views) {
+    const s = servers.find(x => x.id === sid), g = s?.group || '', e = s && envById(envOfServer(s));
+    tintGroup(v.tabEl, g);
+    v.tabEl.title = [e && `Environment: ${envIcon(e)} ${e.name}`, g && `Group: ${g}`].filter(Boolean).join(' · ');
+    const chip = v.root.querySelector('.sgroup');
+    chip.textContent = [e && `${envIcon(e)} ${e.name}`, g && `▣ ${g}`].filter(Boolean).join('  ›  ');
+    chip.hidden = !e;
+    tintGroup(chip, g);
+  }
+}
+
+// Drag tabs (items matching sel, marked draggable) to reorder them inside box.
+function dragReorder(box, sel, done) {
+  let drag = null;
+  box.addEventListener('dragstart', e => {
+    drag = e.target.closest?.(sel);
+    if (!drag || drag.parentElement !== box) { drag = null; return; }
+    e.dataTransfer.effectAllowed = 'move';
+    drag.classList.add('dragging');
+  });
+  box.addEventListener('dragover', e => {
+    const over = e.target.closest?.(sel);
+    if (!drag || !over || over === drag || over.parentElement !== box) return;
+    e.preventDefault();
+    const r = over.getBoundingClientRect();
+    over[e.clientX < r.left + r.width / 2 ? 'before' : 'after'](drag);
+  });
+  box.addEventListener('dragend', () => { if (!drag) return; drag.classList.remove('dragging'); drag = null; done?.(); });
+}
+// Server tabs (Home stays first).
+dragReorder($('#tabs'), '.tab[data-sid]', () => saveTabs());
+
+// Open server tabs (in tab order) are remembered; Settings → General → reopen them at startup.
+const tabIds = () => [...$('#tabs').querySelectorAll('.tab[data-sid]')].map(t => t.dataset.sid);
+const saveTabs = () => { try { localStorage.setItem('openTabs', JSON.stringify(tabIds())); } catch { /* not remembered */ } };
+const restoreTabsOn = () => { try { return localStorage.getItem('restoreTabs') === 'on'; } catch { return false; } };
+
+// "+" opens a terminal on this computer as a server tab (Terminal only: no SSH, so no files/logs/metrics).
+const LOCAL = 'local';
+const LOCAL_SERVER = { id: LOCAL, name: 'localhost', host: 'localhost', local: true };
+$('#localTab').onclick = () => openServer(LOCAL_SERVER);
+
+// Tabs whose connection failed or dropped; one button reconnects them all.
+function paintReconnect() {
+  const n = [...views.values()].filter(v => v.failed).length;
+  $('#reconnAll').hidden = !n;
+  $('#reconnAll').textContent = `⟳ Reconnect failed (${n})`;
+}
+$('#reconnAll').onclick = () => { for (const [sid, v] of views) if (v.failed) reconnect(sid); };
+// Fresh page in the same tab position; the tab on screen stays on screen.
+function reconnect(sid) {
+  const v = views.get(sid);
+  if (!v) return;
+  const s = servers.find(x => x.id === sid) || v.server, next = v.tabEl.nextSibling, cur = shownId;
+  v.dispose();
+  views.delete(sid);
+  const p = openServer(s); // adds the tab and shows it synchronously, then connects
+  next.before(views.get(sid).tabEl);
+  show(cur);
+  saveTabs();
+  paintReconnect();
+  return p;
+}
+
 // ================= home: servers, groups, users =================
-let servers = [], users = [], savedGroups = [];
+let servers = [], users = [], savedGroups = [], groupColors = {};
 let homeMode = 'all'; // 'all' | 'fav' | 'users' | 'group:<name>'
 const UNGROUPED = 'Ungrouped';
 const groupOf = s => s.group || UNGROUPED;
@@ -105,16 +193,35 @@ let collapsed = new Set();
 try { collapsed = new Set(JSON.parse(localStorage.getItem('collapsedGroups')) || []); } catch { /* start expanded */ }
 const saveCollapsed = () => { try { localStorage.setItem('collapsedGroups', JSON.stringify([...collapsed])); } catch { /* ignore */ } };
 
+// ---- environments: each one holds parameters + groups + servers (see main.js "environments") ----
+let envs = { list: [], groups: {} };
+let curEnv = 'all'; // switcher: 'all' or an environment id
+try { curEnv = localStorage.getItem('curEnv') || 'all'; } catch { /* default */ }
+const envById = id => envs.list.find(e => e.id === id);
+const envIcon = e => (e?.shared ? '👥' : '👤'); // shared with the team / only yours
+const envOfGroup = g => (envById(envs.groups[g]) ? envs.groups[g] : 'local');
+const envOfServer = s => (s.team ? 'team' : s.group ? envOfGroup(s.group) : envById(s.env) ? s.env : 'local');
+const inEnv = s => curEnv === 'all' || envOfServer(s) === curEnv;
+// Environment used for a script run on a server (local terminals: the switcher's, or Local).
+const runEnv = sid => { const s = servers.find(x => x.id === sid); return envById(s ? envOfServer(s) : curEnv) || envById('local'); };
+const envVarsFor = sid => { const e = runEnv(sid); return e ? { ...e.vars, ENV: e.name } : {}; };
+const envByKey = () => Object.fromEntries(envs.list.map(e => [e.key, e.vars || {}]));
+
 async function refreshServers() {
-  [servers, users, savedGroups] = await Promise.all([api.servers.list(), api.users.list(), api.groups.list()]);
+  [servers, users, savedGroups, groupColors, envs] = await Promise.all([api.servers.list(), api.users.list(), api.groups.list(), api.groups.colors(), api.envs.list()]);
+  if (curEnv !== 'all' && !envById(curEnv)) curEnv = 'all';
+  renderEnvSel();
   renderNav();
+  paintTabs();
   renderServers();
   renderUsers();
 }
 
+// Groups of the selected environment (all of them with "All environments").
 function groupNames() {
-  const named = [...new Set([...savedGroups, ...servers.map(s => s.group).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
-  return servers.some(s => !s.group) ? [...named, UNGROUPED] : named;
+  const named = [...new Set([...savedGroups, ...servers.map(s => s.group).filter(Boolean)])]
+    .filter(g => curEnv === 'all' || envOfGroup(g) === curEnv).sort((a, b) => a.localeCompare(b));
+  return servers.some(s => !s.group && inEnv(s)) ? [...named, UNGROUPED] : named;
 }
 
 function setMode(mode) {
@@ -128,23 +235,35 @@ function setMode(mode) {
 
 function renderNav() {
   const g = modeGroup();
-  $('#navCount').textContent = servers.length;
-  $('#favCount').textContent = servers.filter(s => s.starred).length || '';
+  $('#navCount').textContent = servers.filter(inEnv).length;
+  $('#favCount').textContent = servers.filter(s => s.starred && inEnv(s)).length || '';
   $('#userCount').textContent = users.length || '';
   $('#navAll').classList.toggle('active', homeMode === 'all');
   $('#navFav').classList.toggle('active', homeMode === 'fav');
   $('#navUsers').classList.toggle('active', homeMode === 'users');
   $('#navDeploy').classList.toggle('active', homeMode === 'deploy');
-  $('#navGroups').replaceChildren(...groupNames().map(name => el('button', {
-    className: 'navitem' + (g === name ? ' active' : ''), title: name, onclick: () => setMode('group:' + name),
-  }, el('i', { textContent: name === UNGROUPED ? '◌' : '▣' }), el('span', { className: 'lbl', textContent: name }),
-  el('span', { className: 'count lbl', textContent: servers.filter(s => groupOf(s) === name).length }),
-  ...(name === UNGROUPED ? [] : [iconBtn('✎', `Edit group ${name}`, () => editGroup(name), 'icon gedit lbl')]))));
-  $('#serversView').hidden = homeMode === 'users' || homeMode === 'deploy';
+  $('#navScripts').classList.toggle('active', homeMode === 'scripts');
+  $('#navBcast').classList.toggle('active', homeMode === 'bcast');
+  $('#navGroups').replaceChildren(...groupNames().map(name => tintGroup(el('button', {
+    className: 'navitem' + (g === name ? ' active' : ''), title: name, onclick: () => setMode(g === name ? 'all' : 'group:' + name), // click again = back to All Servers
+  }, el('i', { textContent: name === UNGROUPED ? '◌' : envIcon(envById(envOfGroup(name))), title: name === UNGROUPED ? '' : `Environment: ${envById(envOfGroup(name))?.name}` }),
+  el('span', { className: 'lbl', textContent: name }),
+  el('span', { className: 'count lbl', textContent: servers.filter(s => groupOf(s) === name && inEnv(s)).length }),
+  ...(name === UNGROUPED ? [] : [iconBtn('✎', `Edit group ${name}`, () => editGroup(name), 'icon gedit lbl')])), name === UNGROUPED ? '' : name)));
+  $('#navEnvs').classList.toggle('active', homeMode === 'envs');
+  $('#envCount').textContent = envs.list.length || '';
+  $('#envsView').hidden = homeMode !== 'envs';
+  if (homeMode === 'envs') renderEnvPage();
+  $('#serversView').hidden = ['users', 'deploy', 'scripts', 'bcast', 'envs'].includes(homeMode);
   $('#usersView').hidden = homeMode !== 'users';
   $('#deployView').hidden = homeMode !== 'deploy';
+  $('#scriptsView').hidden = homeMode !== 'scripts';
+  $('#bcastView').hidden = homeMode !== 'bcast';
   $('#home .content').classList.toggle('flush', homeMode === 'deploy');
+  $('#home .content').classList.toggle('fill', homeMode === 'scripts' || homeMode === 'bcast');
   if (homeMode === 'deploy') deploys ||= initDeployments($('#deployView .panel'));
+  if (homeMode === 'scripts') homeScripts().load();
+  if (homeMode === 'bcast') bcastOptions();
   // suggestions for the server form
   $('#groupList').replaceChildren(...groupNames().filter(x => x !== UNGROUPED).map(value => el('option', { value })));
   $('#usernameList').replaceChildren(...users.map(u => el('option', { value: u.username, label: u.label })));
@@ -197,9 +316,58 @@ async function openMetrics(s) {
   v.pickPanel?.('stats');
 }
 
+// ---- availability (probed in main, pushed every interval) ----
+// Painted in place (data-av="<serverId>:<server|ssh|desk>") so a refresh never rebuilds the table.
+let avail = {};
+const AV_NAME = { server: 'Server', ssh: 'SSH', desk: 'Desktop' };
+const avMark = (id, key) => {
+  const e = el('span', { className: 'av' });
+  e.dataset.av = `${id}:${key}`;
+  return e;
+};
+// Button label on the left, protocol status on the right (buttons share one width, see .actions .desk/.conn).
+const withAv = (btn, id, key) => {
+  btn.replaceChildren(el('span', { className: 'blbl', textContent: btn.textContent }), avMark(id, key));
+  return btn;
+};
+// Green = answered, red = failed check (refused or no answer), grey = not checked yet / checking off.
+function paintAvail() {
+  for (const e of document.querySelectorAll('[data-av]')) {
+    const [id, key] = e.dataset.av.split(':');
+    const a = avail[id];
+    const st = !a ? 'none' : a[key] === 'up' ? 'up' : 'down';
+    e.className = 'av ' + st;
+    const tip = !a ? `${AV_NAME[key]}: not checked yet (or checking is off in Settings / for this server)`
+      : `${AV_NAME[key]}: ${st === 'up' ? 'available' : 'not available'} · checked ${new Date(a.at).toLocaleString()}`;
+    if (key === 'server') e.dataset.tip = tip; // State column: instant CSS tooltip (native title waits ~2 s)
+    else e.title = tip;
+  }
+}
+// OS popup (HTML5 Notification = native notification in Electron). Off in Settings → notifications.
+const notifyOn = () => { try { return localStorage.getItem('notify') !== 'off'; } catch { return true; } };
+// Module a server page opens on (Settings → "Open servers in"). Default: File Manager.
+const PANELS = ['files', 'term', 'logs', 'stats'];
+const defaultPanel = () => { try { const p = localStorage.getItem('defaultPanel'); return PANELS.includes(p) ? p : 'files'; } catch { return 'files'; } };
+function notify(title, body) {
+  try { if (notifyOn()) new Notification(title, { body }); } catch { /* notifications blocked */ }
+}
+function onAvail(next) {
+  for (const [id, a] of Object.entries(next)) {
+    const was = avail[id]?.server;
+    if (!was || was === a.server) continue; // first check or no change: stay quiet
+    const s = servers.find(x => x.id === id);
+    if (s) notify(a.server === 'up' ? `✅ ${s.name} is back up` : `⛔ ${s.name} is not responding`, s.host);
+  }
+  avail = next;
+  paintAvail();
+}
+api.avail.onUpdate(onAvail);
+api.avail.get().then(a => { avail = a; paintAvail(); });
+
 function serverRow(s) {
   const tr = el('tr', { className: 'srow' + (alertState.get(s.id)?.size ? ' alerting' : '') },
-    el('td', {}, el('span', { className: 'dot' + (views.has(s.id) ? ' on' : '') }), el('b', { textContent: s.name })),
+    el('td', { className: 'state' }, avMark(s.id, 'server')),
+    el('td', {}, el('b', { textContent: s.name }), teamBadge(s)),
     el('td', {}, el('span', { className: 'proto ' + typeOf(s), textContent: typeOf(s).toUpperCase() })),
     el('td', { className: 'mono', title: s.userLabel ? `Login: saved user "${s.userLabel}"` : '' },
       `${s.username ? s.username + '@' : ''}${s.host}` + (s.port !== defaultPort(s) ? `:${s.port}` : ''),
@@ -210,13 +378,14 @@ function serverRow(s) {
     el('td', { className: 'muted', textContent: ago(s.lastSeen) }),
     el('td', { className: 'r actions' },
       iconBtn(s.starred ? '★' : '☆', s.starred ? 'Unfavorite' : 'Favorite', () => toggleStar(s), 'icon' + (s.starred ? ' star' : '')),
-      iconBtn('✎', 'Edit', () => editServer(s)),
-      iconBtn('🗑', 'Delete', () => deleteServer(s), 'icon danger'),
-      typeOf(s) === 'rdp'
+      iconBtn('✎', canEdit(s) ? 'Edit' : 'Your login for this team server', () => editServer(s)),
+      ...teamBtns('server', s, refreshServers),
+      canEdit(s) ? iconBtn('🗑', 'Delete', () => deleteServer(s), 'icon danger') : null,
+      withAv(typeOf(s) === 'rdp'
         ? iconBtn('🖥 Desktop', `Open Remote Desktop (RDP, port ${s.port})`, () => openRdp(s), 'desk')
-        : iconBtn(...(DESKTOP[s.os] || DESKTOP['']), () => openDesktop(s), 'desk'),
-      iconBtn(views.has(s.id) ? '↗ Open' : '▶ Connect',
-        typeOf(s) === 'rdp' ? `Open SSH (Windows OpenSSH, port ${s.sshPort || 22}) with the same login` : 'Connect', () => connectServer(s), 'primary')));
+        : iconBtn(...(DESKTOP[s.os] || DESKTOP['']), () => openDesktop(s), 'desk'), s.id, 'desk'),
+      withAv(iconBtn(views.has(s.id) ? '↗ Open' : '▶ SSH',
+        typeOf(s) === 'rdp' ? `Open SSH (Windows OpenSSH, port ${s.sshPort || 22}) with the same login` : 'Connect', () => connectServer(s), 'primary conn'), s.id, 'ssh')));
   tr.ondblclick = () => connectServer(s);
   return tr;
 }
@@ -226,46 +395,131 @@ function renderServers() {
   const g = modeGroup();
   const list = servers
     .filter(s => homeMode !== 'fav' || s.starred)
+    .filter(inEnv)
     .filter(s => !g || groupOf(s) === g)
     .filter(s => !q || [s.name, s.host, s.username, s.group || '', s.details || '', ...s.tags].some(x => x.toLowerCase().includes(q)))
     .sort((a, b) => b.starred - a.starred || a.name.localeCompare(b.name));
   $('#countBadge').textContent = `${list.length} server${list.length === 1 ? '' : 's'}`;
-  $('#homeTitle').textContent = g || (homeMode === 'fav' ? 'Favorites' : 'All Servers');
+  $('#homeTitle').textContent = g || (homeMode === 'fav' ? 'Favorites' : curEnv === 'all' ? 'All Servers' : envById(curEnv)?.name || 'All Servers');
   const rows = [];
-  for (const name of groupNames()) {
+  for (const name of g ? [g] : groupNames()) { // a selected group shows only itself, not the others as empty
     const members = list.filter(s => groupOf(s) === name);
     if (!members.length && (q || homeMode === 'fav')) continue; // empty groups show only when not filtering
     const shut = !q && collapsed.has(name); // searching always shows matches
     rows.push(el('tr', {
       className: 'grprow' + (shut ? ' shut' : ''),
       onclick: () => { collapsed[collapsed.has(name) ? 'delete' : 'add'](name); saveCollapsed(); renderServers(); },
-    }, el('td', { colSpan: 8 },
+    }, el('td', { colSpan: 9 },
       el('span', { className: 'caret', textContent: shut ? '▸' : '▾' }),
+      ...(name === UNGROUPED ? [] : [el('span', { className: 'envi', textContent: envIcon(envById(envOfGroup(name))), title: envById(envOfGroup(name))?.name })]),
       el('b', { textContent: name }),
+      ...(curEnv === 'all' && name !== UNGROUPED ? [el('small', { className: 'muted', textContent: envById(envOfGroup(name))?.name })] : []),
       el('span', { className: 'count', textContent: members.length }),
       el('span', { className: 'grow' }),
       el('span', { className: 'gacts' },
         ...(name === UNGROUPED ? [] : [iconBtn('✎', `Edit group ${name}`, () => editGroup(name))]),
         iconBtn('＋', `Add a server to ${name}`, () => editServer({ group: name === UNGROUPED ? '' : name }))))));
+    tintGroup(rows.at(-1), name === UNGROUPED ? '' : name);
     if (!shut) rows.push(...members.map(serverRow));
   }
   $('#serverRows').replaceChildren(...rows);
-  $('#emptyHome').hidden = servers.length > 0;
+  paintAvail();
+  $('#emptyHome').hidden = servers.filter(inEnv).length > 0;
 }
 // ---- groups: new / rename / delete ----
-function editGroup(name = '') {
+// Gentle (muted pastel) colors: readable as text tint and as a soft background in both themes.
+const GROUP_PALETTE = ['#8fb3d9', '#8fc9a8', '#d9c48f', '#d9a38f', '#d98fa8', '#b39fd9', '#8fcfcf', '#b8c98f',
+  '#5b8fd9', '#3fb77a', '#e0b030', '#e07a3f', '#e0527a', '#8a63d2', '#2fb5b5', '#8fb830',
+  '#c9c9c9', '#8a8f98', '#a0714f', '#4a5fb0', '#d94f4f', '#e08fd0', '#6fd0a0', '#f0d060'];
+// ---- color picker: saturation/brightness surface + hue slider + HEX field, then quick-pick swatches ----
+const HEX = /^#[0-9a-f]{6}$/i;
+function hexToHsv(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+  const h = !d ? 0 : max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, max ? d / max : 0, max];
+}
+function hsvToHex(h, s, v) {
+  const f = n => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return '#' + [f(5), f(3), f(1)].map(x => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+}
+// initial: a group's/environment's current color ('' = none). onChange(hex | '') on every change.
+function colorPicker(initial, onChange, disabled = false) {
+  let hex = HEX.test(initial || '') ? initial.toLowerCase() : '';
+  let [h, sat, val] = hex ? hexToHsv(hex) : [210, 0.5, 0.85];
+  const trigger = el('button', { type: 'button', className: 'cp-trigger', disabled });
+  const thumb = el('span', { className: 'cp-thumb' });
+  const surface = el('div', { className: 'cp-surface' }, thumb);
+  const hue = el('input', { type: 'range', className: 'cp-hue', min: 0, max: 360, step: 1 });
+  const field = el('input', { className: 'cp-hex mono', maxLength: 7, placeholder: '#rrggbb', spellcheck: false });
+  const swatches = el('div', { className: 'cp-swatches' });
+  const panel = el('div', { className: 'cp-panel', hidden: true }, surface, hue,
+    el('label', { className: 'cp-hexrow' }, el('small', { textContent: 'HEX' }), field),
+    swatches, el('button', { type: 'button', className: 'linkbtn', textContent: '✕ No color', onclick: () => set('', true) }));
+  const paint = () => {
+    const cur = hex || null;
+    surface.style.background = `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${h} 100% 50%))`;
+    thumb.style.left = sat * 100 + '%';
+    thumb.style.top = (1 - val) * 100 + '%';
+    thumb.style.background = hsvToHex(h, sat, val);
+    hue.value = h;
+    if (document.activeElement !== field) field.value = hex;
+    trigger.replaceChildren(el('span', { className: 'cp-dot' + (cur ? '' : ' none'), style: cur ? `background:${cur}` : '' }),
+      el('span', { className: 'mono', textContent: cur || 'No color' }));
+    for (const b of swatches.children) b.classList.toggle('on', b.dataset.c === hex);
+  };
+  const set = (v, fromHex) => {
+    hex = v;
+    if (v && fromHex) [h, sat, val] = hexToHsv(v);
+    paint();
+    onChange(hex);
+  };
+  const fromHsv = () => set(hsvToHex(h, sat, val), false);
+  const drag = e => {
+    const r = surface.getBoundingClientRect();
+    sat = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+    val = 1 - Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    fromHsv();
+  };
+  surface.onpointerdown = e => { surface.setPointerCapture(e.pointerId); drag(e); surface.onpointermove = drag; };
+  surface.onpointerup = () => { surface.onpointermove = null; };
+  hue.oninput = () => { h = +hue.value; fromHsv(); };
+  field.oninput = () => { const v = field.value.trim().toLowerCase(); if (HEX.test(v)) set(v, true); };
+  field.onblur = paint;
+  swatches.replaceChildren(...GROUP_PALETTE.map(c => {
+    const b = el('button', { type: 'button', className: 'sw', title: c, onclick: () => set(c, true) });
+    b.style.background = c;
+    b.dataset.c = c;
+    return b;
+  }));
+  trigger.onclick = () => { panel.hidden = !panel.hidden; };
+  paint();
+  return el('div', { className: 'cpick' }, trigger, panel);
+}
+const groupColor = g => (g && groupColors[g]) || '';
+// Tint an element with a group color (CSS uses --gc); no color = untouched.
+const tintGroup = (e, g) => { const c = groupColor(g); e.classList.toggle('gc', !!c); if (c) e.style.setProperty('--gc', c); else e.style.removeProperty('--gc'); return e; };
+function editGroup(name = '', env = '') {
   const dlg = $('#groupDlg'), f = $('#groupForm');
+  // which environment the group is in (team groups stay in Team)
+  const gEnv = name ? envOfGroup(name) : env || (curEnv !== 'all' && curEnv !== 'team' ? curEnv : 'local');
+  f.elements.env.replaceChildren(...envs.list.filter(e => e.id !== 'team' || gEnv === 'team')
+    .map(e => el('option', { value: e.id, textContent: `${envIcon(e)} ${e.name}` })));
+  f.elements.env.value = gEnv;
+  f.elements.env.disabled = gEnv === 'team';
   $('#groupTitle').textContent = name ? 'Edit group' : 'New group';
   f.elements.name.value = name;
   const n = servers.filter(s => s.group === name).length;
   $('#groupInfo').textContent = name ? `${n} server${n === 1 ? '' : 's'} in this group.` : '';
   f.querySelector('.gdel').hidden = !name;
+  let color = groupColors[name] || '';
+  $('#groupColors').replaceChildren(colorPicker(color, c => { color = c; }));
   dlg.returnValue = '';
   dlg.showModal();
   dlg.addEventListener('close', async () => {
     try {
       if (dlg.returnValue === 'save') {
-        const next = await api.groups.save(name, f.elements.name.value);
+        const next = await api.groups.save(name, f.elements.name.value, color, f.elements.env.value);
         if (name && next !== name) {
           if (collapsed.delete(name)) { collapsed.add(next); saveCollapsed(); }
           if (modeGroup() === name) homeMode = 'group:' + next;
@@ -278,11 +532,97 @@ function editGroup(name = '') {
         if (modeGroup() === name) homeMode = 'all';
         toast(`Group ${name} deleted`);
       } else return;
-      refreshServers();
+      await refreshServers();
+      if ($('#envDlg').open) envGroupsPane();
     } catch (e) { toast(cleanErr(e), true); }
   }, { once: true });
 }
 $('#newGroupBtn').onclick = () => editGroup();
+
+// ---- environment switcher + settings dialog ----
+function renderEnvSel() {
+  $('#envSel').replaceChildren(el('option', { value: 'all', textContent: '◎ All environments' }),
+    ...envs.list.map(e => el('option', { value: e.id, textContent: `${envIcon(e)} ${e.name}` })),
+    el('option', { value: '+', textContent: '＋ New environment…' }));
+  $('#envSel').value = curEnv;
+  $('#envEditBtn').title = curEnv === 'all' ? 'Environment settings (Local)' : `Settings: ${envById(curEnv)?.name}`;
+}
+function setEnv(id) {
+  curEnv = id;
+  try { localStorage.setItem('curEnv', id); } catch { /* not remembered */ }
+  if (modeGroup() && !groupNames().includes(modeGroup())) homeMode = 'all';
+  renderEnvSel();
+  setMode(homeMode);
+}
+$('#envSel').onchange = () => { if ($('#envSel').value === '+') { $('#envSel').value = curEnv; editEnv(null); } else setEnv($('#envSel').value); };
+$('#envEditBtn').onclick = () => editEnv(curEnv === 'all' ? 'local' : curEnv);
+
+let envEditing = null; // the environment open in #envDlg
+function envTab(k) {
+  for (const b of $('#envForm').querySelectorAll('.stabs button')) b.classList.toggle('on', b.dataset.tab === k);
+  for (const p of $('#envForm').querySelectorAll('.spane')) p.hidden = p.dataset.pane !== k;
+}
+for (const b of $('#envForm').querySelectorAll('.stabs button')) b.onclick = () => envTab(b.dataset.tab);
+function envGroupsPane() {
+  const e = envEditing;
+  if (!e?.id) {
+    $('#envGroups').replaceChildren(el('p', { className: 'muted', textContent: 'Save the environment first, then add groups to it.' }));
+    $('#envNewGroup').hidden = true;
+    return;
+  }
+  $('#envNewGroup').hidden = e.id === 'team';
+  const names = [...new Set([...savedGroups, ...servers.map(s => s.group).filter(Boolean)])].filter(g => envOfGroup(g) === e.id).sort((a, b) => a.localeCompare(b));
+  $('#envGroups').replaceChildren(...(names.length ? names.map(g => tintGroup(el('div', { className: 'envgrp' },
+    el('span', { textContent: envIcon(e) }), el('b', { className: 'grow', textContent: g }),
+    el('span', { className: 'muted', textContent: `${servers.filter(s => s.group === g).length} servers` }),
+    iconBtn('✎', `Edit group ${g}`, () => editGroup(g))), g))
+    : [el('p', { className: 'muted', textContent: 'No groups yet.' })]));
+}
+function editEnv(id) {
+  const e = id ? envById(id) : { id: null, name: '', color: '', vars: {}, shared: false };
+  if (!e) return;
+  envEditing = e;
+  const f = $('#envForm'), ro = !!e.readOnly;
+  $('#envTitle').textContent = id ? `${envIcon(e)} ${e.name}` : 'New environment';
+  f.elements.name.value = e.id === 'local' ? (e.name === (acctInfo.email || '').split('@')[0] ? '' : e.name) : e.name;
+  f.elements.name.placeholder = e.id === 'local' ? (acctInfo.email ? acctInfo.email.split('@')[0] : 'Local') : 'e.g. Production';
+  f.elements.name.disabled = e.id === 'team';
+  f.elements.name.required = !e.builtin;
+  $('#envShareInfo').textContent = e.shared ? '👥 Shared with your team: everyone in the team sees it. Only team admins change it.'
+    : e.id === 'local' ? '👤 Your Local environment: your own servers, and the global variables as its parameters. Empty name = your account name.'
+      : '👤 Local Environment only. Shared environments will be available soon.';
+  $('#envKey').textContent = e.key ? `Use {{name}} in scripts run on this environment's servers, or {{${e.key}.name}} from anywhere.` : 'Use {{name}} in scripts run on this environment\'s servers.';
+  f.elements.vars.value = varsText(e.vars);
+  f.elements.description.value = e.description || '';
+  f.elements.description.disabled = e.id === 'team';
+  f.elements.vars.disabled = ro;
+  let color = e.color || '';
+  $('#envColors').replaceChildren(colorPicker(color, c => { color = c; }, e.id === 'team'));
+  f.querySelector('.edel').hidden = !e.id || e.builtin;
+  f.querySelector('.esave').hidden = ro;
+  envTab('general');
+  envGroupsPane();
+  const dlg = $('#envDlg');
+  dlg.returnValue = '';
+  dlg.showModal();
+  dlg.addEventListener('close', async () => {
+    try {
+      if (dlg.returnValue === 'save') {
+        const nid = await api.envs.save({ id: e.id, name: f.elements.name.value, color, description: f.elements.description.value, vars: parseVars(f.elements.vars.value) });
+        toast(id ? 'Environment saved' : `Environment ${f.elements.name.value.trim()} created`);
+        await refreshServers();
+        if (!id) setEnv(nid);
+        homeScriptsPanel?.load();
+      } else if (dlg.returnValue === 'delete') {
+        if (!await confirmDeleteEnv(e)) return;
+        await api.envs.delete(e.id);
+        toast(`Environment ${e.name} deleted`);
+        await refreshServers();
+      }
+    } catch (err) { toast(cleanErr(err), true); }
+  }, { once: true });
+}
+$('#envNewGroup').onclick = () => editGroup('', envEditing?.id);
 
 $('#collapseAll').onclick = () => { collapsed = new Set(groupNames()); saveCollapsed(); renderServers(); };
 $('#expandAll').onclick = () => { collapsed.clear(); saveCollapsed(); renderServers(); };
@@ -305,7 +645,7 @@ async function openRdp(s) {
 // Desktop button for SSH servers, by the server's OS (unknown until the first connection).
 const DESKTOP = {
   windows: ['🖥 RDP', 'Open with Remote Desktop (Windows App, port 3389)'],
-  macos: ['🖥 Screen Sharing', 'Open with macOS Screen Sharing (Remote Management must be on)'],
+  macos: ['🖥 Screen','Open with macOS Screen Sharing (Remote Management must be on)'],
   linux: ['🖥 VNC', 'Open the desktop with Screen Sharing (needs a VNC server on port 5900)'],
   unix: ['🖥 VNC', 'Open the desktop with Screen Sharing (needs a VNC server on port 5900)'],
   '': ['🖥 Desktop', 'Open the remote desktop: RDP for Windows, Screen Sharing for macOS/Linux (detects the OS over SSH)'],
@@ -328,8 +668,14 @@ async function toggleStar(s) {
 function editServer(s = {}) {
   const f = $('#serverForm');
   f.reset();
+  f.elements.id.value = ''; // reset() keeps hidden inputs: a stale id turned "Add" into overwriting the last edited server
   for (const k of ['id', 'name', 'host', 'port', 'username', 'keyPath', 'group']) if (s[k] != null) f.elements[k].value = s[k];
   f.elements.type.value = typeOf(s);
+  f.elements.env.replaceChildren(...envs.list.filter(e => e.id !== 'team' || s.team)
+    .map(e => el('option', { value: e.id, textContent: `${envIcon(e)} ${e.name}` })));
+  f.elements.env.value = s.id ? envOfServer(s) : s.group ? envOfGroup(s.group) : curEnv !== 'all' && curEnv !== 'team' ? curEnv : 'local';
+  f.elements.env.dataset.pick = f.elements.env.value; // restored when the group is changed to a new one
+  syncFormEnv();
   f.elements.domain.value = s.domain || '';
   f.elements.sshPort.value = s.sshPort || 22;
   f.elements.userId.replaceChildren(el('option', { value: '', textContent: 'Enter username / password below' }),
@@ -339,10 +685,26 @@ function editServer(s = {}) {
   f.elements.tags.value = (s.tags || []).join(', ');
   f.elements.details.value = s.details || '';
   f.elements.starred.checked = !!s.starred;
+  f.elements.probe.checked = !s.noProbe;
+  // Team server, not an admin: shared fields are read-only; the login fields stay editable (saved locally).
+  const lock = !canEdit(s);
+  $('#serverTeamNote').hidden = !lock;
+  for (const k of ['name', 'host', 'port', 'group', 'tags', 'details', 'domain', 'sshPort']) f.elements[k].readOnly = lock;
+  f.elements.type.disabled = lock;
   $('#serverDlg').returnValue = ''; // Esc must not reuse the last 'save'
   $('#serverDlg').showModal();
 }
 
+// An existing group decides the environment; a new group is created in the chosen one.
+function syncFormEnv() {
+  const f = $('#serverForm'), g = f.elements.group.value.trim();
+  const known = g && [...savedGroups, ...servers.map(s => s.group)].includes(g);
+  f.elements.env.value = known ? envOfGroup(g) : f.elements.env.dataset.pick;
+  f.elements.env.disabled = !!known || f.elements.env.value === 'team';
+  f.elements.env.title = known ? `Group ${g} is in this environment` : '';
+}
+$('#serverForm').elements.group.addEventListener('input', syncFormEnv);
+$('#serverForm').elements.env.addEventListener('change', e => { e.target.dataset.pick = e.target.value; });
 // Show only the fields that apply; swap the default port when the type changes.
 function syncFormType() {
   const f = $('#serverForm');
@@ -370,13 +732,15 @@ $('#serverForm').elements.username.onchange = () => {
 $('#serverDlg').addEventListener('close', async () => {
   if ($('#serverDlg').returnValue !== 'save') return;
   const e = $('#serverForm').elements;
-  await api.servers.save({
-    id: e.id.value || undefined, type: e.type.value, domain: e.domain.value.trim(), sshPort: e.sshPort.value,
-    name: e.name.value, host: e.host.value, port: e.port.value, group: e.group.value, userId: e.userId.value,
-    username: e.username.value, keyPath: e.keyPath.value.trim(), password: e.userId.value ? '' : e.password.value,
-    tags: e.tags.value.split(',').map(t => t.trim()).filter(Boolean), starred: e.starred.checked,
-    details: e.details.value,
-  });
+  try {
+    await api.servers.save({
+      id: e.id.value || undefined, type: e.type.value, domain: e.domain.value.trim(), sshPort: e.sshPort.value,
+      name: e.name.value, host: e.host.value, port: e.port.value, group: e.group.value, env: e.env.value, userId: e.userId.value,
+      username: e.username.value, keyPath: e.keyPath.value.trim(), password: e.userId.value ? '' : e.password.value,
+      tags: e.tags.value.split(',').map(t => t.trim()).filter(Boolean), starred: e.starred.checked,
+      details: e.details.value, noProbe: !e.probe.checked,
+    });
+  } catch (err) { toast(`Save failed: ${cleanErr(err)}`, true); }
   refreshServers();
 });
 
@@ -387,12 +751,15 @@ async function deleteServer(s) {
   refreshServers();
 }
 
-$('#addBtn').onclick = () => editServer({ group: modeGroup() && modeGroup() !== UNGROUPED ? modeGroup() : '' });
+$('#addBtn').onclick = () => editServer({ group: modeGroup() && modeGroup() !== UNGROUPED ? modeGroup() : '' }); // environment: the switcher's
 $('#filter').oninput = renderServers;
 $('#navAll').onclick = () => setMode('all');
 $('#navFav').onclick = () => setMode('fav');
 $('#navUsers').onclick = () => setMode('users');
 $('#navDeploy').onclick = () => setMode('deploy');
+$('#navScripts').onclick = () => setMode('scripts');
+$('#navBcast').onclick = () => setMode('bcast');
+$('#navEnvs').onclick = () => setMode('envs');
 
 // ---- users (saved credentials) ----
 function renderUsers() {
@@ -469,7 +836,9 @@ function showProvider(p) {
   const d = aiSettings.providers[p];
   $('#keyLabel').textContent = `${d.label} API key`;
   $('#keyStatus').textContent = d.fromEnv ? `Using ${d.env} from the environment (it overrides a saved key).`
-    : d.hasKey ? 'A key is saved for this provider (encrypted in Keychain).' : 'No key for this provider — Ask AI is disabled until you add one.';
+    : d.hasKey ? 'A key is saved for this provider (encrypted in Keychain).'
+    : d.cli ? 'Runs the Cursor CLI (cursor-agent) on this Mac. Key optional: without one it uses your `cursor-agent login`.'
+    : 'No key for this provider — Ask AI is disabled until you add one.';
   f.clearKey.parentElement.hidden = !d.hasKey || d.fromEnv;
   f.clearKey.checked = false;
   f.apiKey.value = '';
@@ -478,22 +847,152 @@ function showProvider(p) {
   aiMsg('');
 }
 async function openSettings(focusKey = false) {
-  aiSettings = await api.settings.get();
+  [aiSettings] = await Promise.all([api.settings.get(), loadAcct()]);
+  renderAccount();
   const f = $('#settingsForm');
   f.reset();
   f.elements.theme.value = getThemePref();
   f.elements.autoUpdate.checked = aiSettings.autoUpdate;
+  f.elements.logToFile.checked = aiSettings.logToFile;
+  f.elements.logDir.value = aiSettings.logDir;
+  f.elements.availOn.checked = aiSettings.avail.on;
+  f.elements.availSec.value = aiSettings.avail.intervalSec;
+  f.elements.notify.checked = notifyOn();
+  f.elements.defaultPanel.value = defaultPanel();
+  f.elements.restoreTabs.checked = restoreTabsOn();
   $('#updHint').textContent = `You have version ${aiSettings.version}. Checks at startup and every 6 hours. Help → Check for Updates… checks now.`;
   f.elements.aiProvider.replaceChildren(...Object.entries(aiSettings.providers)
     .map(([value, d]) => el('option', { value, textContent: d.label + (d.hasKey ? '  ✓' : '') })));
   f.elements.aiProvider.value = aiSettings.aiProvider;
   showProvider(aiSettings.aiProvider);
+  settingsTab(focusKey ? 'ai' : 'general');
   $('#settingsDlg').returnValue = '';
   $('#settingsDlg').showModal();
   if (focusKey) f.elements.apiKey.focus();
 }
+function settingsTab(k) {
+  for (const b of document.querySelectorAll('#settingsForm .stabs button')) b.classList.toggle('on', b.dataset.tab === k);
+  for (const p of document.querySelectorAll('#settingsForm .spane')) p.hidden = p.dataset.pane !== k;
+}
+for (const b of document.querySelectorAll('#settingsForm .stabs button')) b.onclick = () => settingsTab(b.dataset.tab);
 $('#settingsForm').elements.aiProvider.onchange = e => showProvider(e.target.value);
+$('#logPick').onclick = async () => {
+  const dir = await api.settings.pickLogDir($('#settingsForm').elements.logDir.value);
+  if (dir) $('#settingsForm').elements.logDir.value = dir;
+};
+$('#logOpen').onclick = () => api.log.openFolder();
+$('#logConsole').onclick = () => api.log.openConsole();
 $('#settingsBtn').onclick = () => openSettings();
+$('#ftSettings').onclick = () => openSettings();
+api.ui.onSettings(() => openSettings());
+$('#consoleBtn').onclick = () => api.log.openConsole();
+
+// ---- Settings → Account / Team (buttons act right away; they are not part of Save) ----
+async function acctAction(btn, fn, okMsg) {
+  btn.disabled = true;
+  try { const r = await fn(); if (r?.signedIn !== undefined) acctInfo = r; if (okMsg) toast(okMsg); }
+  catch (e) { toast(cleanErr(e), true); }
+  finally { btn.disabled = false; renderAccount(); paintAcct(); }
+}
+function renderAccount() {
+  const a = acctInfo;
+  const btn = (text, fn, cls = '') => el('button', { type: 'button', className: cls, textContent: text, onclick: e => fn(e.currentTarget) });
+  $('#acctBox').replaceChildren(...(!a.configured
+    ? [el('p', { textContent: 'Google sign-in is not set up in this build of EranTerm.' }),
+      btn('How to set it up', () => api.help.manual('team-setup'))]
+    : !a.signedIn
+      ? [el('p', { textContent: 'Sign in with your Google account to back up your configuration to your Google Drive and use it on other computers.' }),
+        btn('Sign in with Google', b => acctAction(b, async () => { toast('Finish signing in in your browser…'); return api.account.signIn(); }, 'Signed in'), 'primary')]
+      : [el('p', {}, 'Signed in as ', el('b', { textContent: a.email })),
+        el('p', { className: 'hint', textContent: a.lastSyncAt ? `Last backup to your Google Drive: ${new Date(a.lastSyncAt).toLocaleString()}${a.pending ? ' · changes waiting to upload' : ''}` : 'Not backed up yet.' }),
+        backupOptions(a),
+        el('span', { className: 'modelrow' },
+          btn('Backup now', b => acctAction(b, () => api.account.backupNow(), 'Backed up')),
+          btn('Restore from backup', b => { if (confirm('Restore from backup? This replaces the servers, users, scripts, deployments and settings on this computer with the copy saved in your Google Drive. Passwords and keys stay as they are.')) acctAction(b, () => api.account.restore(), 'Restored from backup'); }),
+          btn('Sign out', b => { if (confirm('Sign out? Your servers and settings stay on this computer; team items are hidden until you sign in again.')) acctAction(b, () => api.account.signOut(), 'Signed out'); }))]));
+  renderTeam();
+}
+// Automatic backup choices: apply right away (they are not part of Save).
+function backupOptions(a) {
+  const b = { ...a.backup };
+  const onChange = el('input', { type: 'checkbox', checked: b.onChange });
+  const periodic = el('input', { type: 'checkbox', checked: b.periodic });
+  const every = el('select', { disabled: !b.periodic }, el('option', { value: 'day', textContent: 'Every day' }), el('option', { value: 'week', textContent: 'Every week' }));
+  every.value = b.every;
+  const save = async () => {
+    every.disabled = !periodic.checked;
+    try { acctInfo = await api.account.setBackup({ onChange: onChange.checked, periodic: periodic.checked, every: every.value }); } catch (e) { toast(cleanErr(e), true); }
+  };
+  onChange.onchange = periodic.onchange = every.onchange = save;
+  return el('div', { className: 'backupOpts' },
+    el('h4', { textContent: 'Automatic backup' }),
+    el('label', { className: 'row' }, onChange, ' On every change (about 4 seconds after)'),
+    el('label', { className: 'row' }, periodic, ' Periodic', every),
+    el('small', { className: 'muted', textContent: 'Periodic uploads waiting changes once the last backup is a day or a week old. With both off, use Backup now.' }));
+}
+function renderTeam() {
+  const a = acctInfo, t = a.team;
+  const ROLE = { owner: 'Owner (manages the team)', admin: 'Admin (publishes and edits team items)', member: 'Member (uses team items)' };
+  if (!a.signedIn) return $('#teamBox').replaceChildren(el('p', { className: 'muted', textContent: 'Sign in (Account tab) to use a shared team workspace.' }), teamHelp());
+  if (!t) {
+    return $('#teamBox').replaceChildren(
+      el('p', { textContent: 'You are not on a team. Ask the team owner to add your email, then press Backup now in the Account tab.' }),
+      el('p', { className: 'hint', textContent: 'Setting up the team for the first time? Create it: you become its owner and add your teammates by email.' }),
+      el('button', { type: 'button', textContent: 'Create team', onclick: e => acctAction(e.currentTarget, () => api.team.create(), 'Team created: you are the owner') }),
+      teamHelp());
+  }
+  const kids = [el('p', {}, 'Your role: ', el('b', { textContent: ROLE[a.role] || a.role }), el('span', { className: 'muted', textContent: ` · owner ${t.owner}` }))];
+  if (a.role === 'owner') {
+    const ta = (name, list) => { const x = el('textarea', { name, rows: 4, spellcheck: false, className: 'mono' }); x.value = list.join('\n'); return x; };
+    const admins = ta('teamAdmins', t.admins), members = ta('teamMembers', t.members);
+    kids.push(el('label', {}, 'Admins: can publish and edit team servers, scripts and deployments (one email per line)', admins),
+      el('label', {}, 'Members: can use team items (one email per line)', members),
+      el('button', { type: 'button', className: 'primary', textContent: 'Save team',
+        onclick: e => acctAction(e.currentTarget, () => api.team.setMembers({ admins: admins.value, members: members.value }), 'Team saved') }),
+      el('p', { className: 'hint', textContent: 'Each person signs in to EranTerm with that Google account. Removing an email removes their access to team items at their next sync.' }));
+  } else {
+    kids.push(el('p', { className: 'hint', textContent: `${t.admins.length} admin(s), ${t.members.length} member(s).` }));
+  }
+  if (teamAdmin()) {
+    kids.push(el('p', { className: 'hint', textContent: 'Publish items with ⇪ on a server, script or deployment. Your global script variables:' }),
+      el('button', { type: 'button', textContent: '⇪ Publish my global variables to the team',
+        onclick: e => acctAction(e.currentTarget, () => api.team.publish('vars', 'globals'), 'Global variables published') }));
+  }
+  kids.push(teamHelp());
+  $('#teamBox').replaceChildren(...kids);
+}
+const teamHelp = () => el('button', { type: 'button', className: 'sm', textContent: '? Help: Team / shared environments', onclick: () => api.help.manual('team-setup') });
+// Something changed in the cloud (another computer, the team): reload what is on screen.
+api.account.onChanged(async () => {
+  await loadAcct();
+  refreshServers();
+  homeScriptsPanel?.load();
+  deploys?.reload();
+  if ($('#settingsDlg').open) renderAccount();
+});
+
+// ---- feedback (Help → Send Feedback…, side menu) ----
+async function openFeedback() {
+  await loadAcct();
+  const f = $('#feedbackForm');
+  f.reset();
+  $('#feedbackWho').textContent = acctInfo.signedIn ? `Sent as ${acctInfo.email}, with your EranTerm version and OS.` : 'Sign in first (Settings → Account) so we know who sent it.';
+  $('#feedbackDlg').returnValue = '';
+  $('#feedbackDlg').showModal();
+}
+$('#feedbackForm').addEventListener('submit', async e => {
+  if (e.submitter?.value !== 'send') return;
+  e.preventDefault(); // stay open on failure
+  const btn = e.submitter;
+  btn.disabled = true;
+  try {
+    await api.feedback.send($('#feedbackForm').elements.text.value);
+    $('#feedbackDlg').close('send');
+    toast('Thanks! Feedback sent.');
+  } catch (err) { toast(cleanErr(err), true); } finally { btn.disabled = false; }
+});
+$('#feedbackBtn').onclick = openFeedback;
+api.feedback.onOpen(openFeedback);
 
 // Confirm / small form dialog. body: string or element(s). Resolves true on OK.
 function ask({ title, body, ok = 'OK', danger = false, okDisabled = false }) {
@@ -553,12 +1052,18 @@ $('#settingsForm').addEventListener('submit', async e => {
       key: f.clearKey.checked ? null : f.apiKey.value.trim(),
     });
     if (f.autoUpdate.checked !== aiSettings.autoUpdate) await api.settings.setAutoUpdate(f.autoUpdate.checked);
-    try { localStorage.setItem('theme', f.theme.value); } catch { /* ignore */ }
+    if (f.logToFile.checked !== aiSettings.logToFile || f.logDir.value.trim() !== aiSettings.logDir) {
+      await api.settings.setLog({ logToFile: f.logToFile.checked, logDir: f.logDir.value });
+    }
+    if (f.availOn.checked !== aiSettings.avail.on || Number(f.availSec.value) !== aiSettings.avail.intervalSec) {
+      await api.settings.setAvail({ on: f.availOn.checked, intervalSec: f.availSec.value });
+    }
+    if (f.notify.checked && Notification.permission === 'default') Notification.requestPermission();
+    try { localStorage.setItem('theme', f.theme.value); localStorage.setItem('notify', f.notify.checked ? 'on' : 'off'); localStorage.setItem('defaultPanel', f.defaultPanel.value); localStorage.setItem('restoreTabs', f.restoreTabs.checked ? 'on' : 'off'); } catch { /* ignore */ }
     $('#settingsDlg').close('save');
     toast(`Settings saved. AI: ${aiSettings.providers[f.aiProvider.value].label}`);
   } catch (err) {
-    aiMsg(aiNoKeyText(err), 'error');
-  } finally { btn.disabled = false; }
+    aiMsg(aiNoKeyText(err), 'error');  } finally { btn.disabled = false; }
 });
 $('#settingsDlg').addEventListener('close', applyTheme);
 
@@ -591,6 +1096,7 @@ const shellsById = new Map(); // shellId -> terminal wrapper
 api.ssh.onData((id, d) => shellsById.get(id)?.term.write(d));
 api.ssh.onClosed(id => {
   shellsById.get(id)?.term.writeln('\r\n\x1b[90m[session closed]\x1b[0m');
+  for (const p of bcast.panes) if (p.t?.id === id && !p.failed) p.fail('session closed');
   shellsById.delete(id);
 });
 
@@ -619,7 +1125,8 @@ function pushHist(serverId, cmd) {
   try { localStorage.setItem('hist:' + serverId, JSON.stringify(h)); } catch { /* ignore */ }
 }
 
-function makeTerm(host, connId, cwd, serverId) {
+// opts.input(data): where typed keys go (Broadcast sends them to many shells); default: this shell.
+function makeTerm(host, connId, cwd, serverId, opts = {}) {
   const term = new Terminal({
     cursorBlink: true, fontSize: 13, fontFamily: 'Menlo, monospace',
     theme: termTheme(),
@@ -629,6 +1136,7 @@ function makeTerm(host, connId, cwd, serverId) {
   term.loadAddon(fit);
   term.open(host);
   const t = { term, id: null };
+  const send = d => (opts.input ? opts.input(d) : api.ssh.write(t.id, d));
   const refit = () => { if (host.offsetParent) fit.fit(); };
   const ro = new ResizeObserver(refit); // handles window resize and hidden->shown
   ro.observe(host);
@@ -678,7 +1186,7 @@ function makeTerm(host, connId, cwd, serverId) {
   }
   function accept() {
     const rest = sug.items[sug.idx]?.slice(sug.line.length);
-    if (rest && t.id) { api.ssh.write(t.id, rest); sug.line += rest; }
+    if (rest && t.id) { send(rest); sug.line += rest; }
     hide();
   }
   function track(d) {
@@ -717,11 +1225,12 @@ function makeTerm(host, connId, cwd, serverId) {
   t.ready = api.ssh.shell(connId, term.cols, term.rows, cwd).then(id => {
     t.id = id;
     shellsById.set(id, t);
-    term.onData(d => { track(d); api.ssh.write(id, d); }); // track first: Enter must see the line before the echo
+    term.onData(d => { track(d); send(d); }); // track first: Enter must see the line before the echo
     term.onResize(({ cols, rows }) => api.ssh.resize(id, cols, rows));
     api.ssh.resize(id, term.cols, term.rows); // size may have changed while the shell was opening
   }, e => term.writeln(`\x1b[31m${cleanErr(e)}\x1b[0m`));
   t.run = async cmd => { await t.ready; if (t.id) api.ssh.write(t.id, cmd); };
+  t.refit = refit;
   t.dispose = () => {
     ro.disconnect();
     if (t.id) { api.ssh.closeShell(t.id); shellsById.delete(t.id); }
@@ -730,6 +1239,439 @@ function makeTerm(host, connId, cwd, serverId) {
   };
   return t;
 }
+
+// ================= scripts panel (server Terminal, home Scripts module, Broadcast) =================
+// box: a clone of #scriptsTpl. run(keys): types a script into a terminal; without it there is no Run button.
+let globalVars = {}; // shared by all scripts; a script's own (local) variable of the same name wins
+function makeScriptsPanel(box, { run, runTitle = 'Run' } = {}) {
+  const q = sel => box.querySelector(sel);
+  let scripts = [], dragId = null;
+  const activeTags = new Set();
+  const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+  const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* not remembered */ } };
+  let sortMode = pref('scriptSort', 'manual');
+  q('.sc-sort').value = sortMode;
+  q('.sc-tagmode').value = pref('scriptTagMode', 'or');
+  q('.sc-hidebuiltin').checked = pref('scriptHideBuiltin', '') === '1';
+  q('.sc-hidebuiltin').onchange = () => { setPref('scriptHideBuiltin', q('.sc-hidebuiltin').checked ? '1' : ''); render(); };
+  q('.sc-tagmode').onchange = () => { setPref('scriptTagMode', q('.sc-tagmode').value); render(); };
+  // built-ins carry the 'built-in' tag; removing that tag makes one count as the user's
+  const shown = () => (q('.sc-hidebuiltin').checked ? scripts.filter(x => !(x.tags || []).includes('built-in')) : scripts);
+  const lastRun = () => { try { return JSON.parse(localStorage.getItem('scriptLastRun')) || {}; } catch { return {}; } };
+  const tagMatch = x => !activeTags.size || [...activeTags][q('.sc-tagmode').value === 'and' ? 'every' : 'some'](t => (x.tags || []).includes(t));
+
+  async function load() {
+    try { [scripts, globalVars] = await Promise.all([api.scripts.list(), api.scripts.globals()]); } catch (e) { toast(cleanErr(e), true); }
+    render();
+  }
+  const toggleTag = t => { activeTags[activeTags.has(t) ? 'delete' : 'add'](t); render(); };
+
+  function renderTags() {
+    const counts = new Map();
+    for (const x of shown()) for (const t of x.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
+    for (const t of activeTags) if (!counts.has(t)) activeTags.delete(t);
+    q('.sc-tagmode').hidden = activeTags.size < 2; // AND/OR only matters with two or more tags picked
+    q('.sc-tags').replaceChildren(
+      ...[...counts.keys()].sort().map(t => el('button', {
+        className: 'tchip' + (activeTags.has(t) ? ' on' : ''), title: `Show scripts tagged "${t}"`, onclick: () => toggleTag(t),
+      }, t, el('small', { textContent: counts.get(t) }))),
+      ...(activeTags.size ? [el('button', { className: 'tchip clear', textContent: '✕ Clear', onclick: () => { activeTags.clear(); render(); } })] : []));
+  }
+
+  function render() {
+    renderTags();
+    const f = q('.sc-filter').value.toLowerCase();
+    let list = shown()
+      .filter(x => !f || `${x.name} ${x.description} ${x.command} ${(x.tags || []).join(' ')}`.toLowerCase().includes(f))
+      .filter(tagMatch);
+    if (sortMode === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    if (sortMode === 'recent') { const lr = lastRun(); list = [...list].sort((a, b) => (lr[b.id] || 0) - (lr[a.id] || 0)); }
+    const canDrag = sortMode === 'manual' && !f && !activeTags.size;
+    q('.sc-hint').textContent = sortMode !== 'manual' ? '' : canDrag ? 'Drag ⋮⋮ to change the order.' : 'Clear the search and tag filters to drag scripts into a new order.';
+    q('.sc-list').replaceChildren(...list.map(x => {
+      const nVars = Object.keys(x.vars || {}).length;
+      const isBuiltin = (x.tags || []).includes('built-in');
+      const li = el('li', { title: x.command, draggable: canDrag, className: isBuiltin ? 'builtin' : '' },
+        el('div', { className: 'sc-head' },
+          canDrag ? el('span', { className: 'grip', textContent: '⋮⋮', title: 'Drag to reorder' }) : null,
+          isBuiltin ? el('span', { className: 'bi-badge', textContent: '🧰', title: 'Built-in script' }) : null,
+          el('b', { textContent: x.name }), teamBadge(x),
+          x.root ? el('span', { textContent: '🔒', title: 'Runs as root (sudo)' }) : null,
+          x.confirm ? el('span', { textContent: '⏎', title: 'Waits for Enter before executing' }) : null,
+          nVars ? el('span', { className: 'muted', textContent: `{{${nVars}}}`, title: `Local variables: ${Object.keys(x.vars).join(', ')}` }) : null,
+          el('span', { className: 'grow' }),
+          canEdit(x) ? iconBtn('✎', 'Edit', () => editScript(x)) : null,
+          ...teamBtns('script', x, load),
+          canEdit(x) ? iconBtn('🗑', 'Delete', () => deleteScript(x), 'icon danger') : null,
+          run ? iconBtn('▶ Run', runTitle, () => runScript(x), 'primary sm') : null),
+        x.description ? el('small', { textContent: x.description }) : null,
+        el('code', { className: 'mono', textContent: x.command.split('\n')[0] + (x.command.includes('\n') ? ' …' : '') }),
+        x.tags?.length ? el('div', { className: 'sc-tagrow' }, ...x.tags.map(t => el('span', {
+          className: 'tag' + (activeTags.has(t) ? ' on' : ''), textContent: t, title: `Filter by "${t}"`,
+          onclick: e => { e.stopPropagation(); toggleTag(t); },
+        }))) : null);
+      if (canDrag) {
+        li.ondragstart = e => { dragId = x.id; li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; };
+        li.ondragend = () => { dragId = null; li.classList.remove('dragging'); };
+        li.ondragover = e => {
+          if (!dragId) return;
+          e.preventDefault();
+          const r = li.getBoundingClientRect();
+          const after = e.clientY > r.top + r.height / 2;
+          li.classList.toggle('drop-after', after);
+          li.classList.toggle('drop-before', !after);
+        };
+        li.ondragleave = () => li.classList.remove('drop-after', 'drop-before');
+        li.ondrop = async e => {
+          e.preventDefault();
+          const after = li.classList.contains('drop-after');
+          li.classList.remove('drop-after', 'drop-before');
+          if (!dragId || dragId === x.id) return;
+          const ids = scripts.map(y => y.id).filter(id => id !== dragId);
+          ids.splice(ids.indexOf(x.id) + (after ? 1 : 0), 0, dragId);
+          scripts = ids.map(id => scripts.find(y => y.id === id));
+          render();
+          try { await api.scripts.reorder(ids); } catch (err) { toast(cleanErr(err), true); load(); }
+        };
+      }
+      return li;
+    }));
+  }
+  q('.sc-sort').onchange = () => { sortMode = q('.sc-sort').value; setPref('scriptSort', sortMode); render(); };
+  q('.sc-restore').onclick = async () => {
+    const n = await api.scripts.restoreBuiltins();
+    toast(n ? `Restored ${n} built-in script${n === 1 ? '' : 's'}` : 'All built-in scripts are already in your list.');
+    load();
+  };
+  // run(keysFor): keysFor(serverId) gives the keys with that server's environment filled in.
+  function runScript(x) {
+    try { localStorage.setItem('scriptLastRun', JSON.stringify({ ...lastRun(), [x.id]: Date.now() })); } catch { /* ignore */ }
+    const miss = new Set();
+    run(sid => {
+      const { text, missing } = fillVars(x.command, x.vars || {}, globalVars, envVarsFor(sid), envByKey());
+      missing.forEach(k => miss.add(k));
+      return scriptKeys(text, x);
+    });
+    if (miss.size) toast(`Not defined, left as is: ${[...miss].map(k => `{{${k}}}`).join(' ')}`, true);
+  }
+  function editScript(x = {}) {
+    const f = $('#scriptForm');
+    f.reset();
+    for (const k of ['id', 'name', 'description', 'command']) f.elements[k].value = x[k] || '';
+    f.elements.root.checked = !!x.root;
+    f.elements.confirm.checked = !!x.confirm;
+    f.elements.tags.value = (x.tags || []).join(', ');
+    f.elements.localVars.value = varsText(x.vars);
+    f.elements.globalVars.value = varsText(globalVars);
+    const globalsBefore = f.elements.globalVars.value;
+    // which {{names}} the command uses and whether each one has a value
+    const varHint = () => {
+      // environment: the switcher's (or Local); the real one is the target server's, at run time
+      const { missing } = fillVars(f.elements.command.value, parseVars(f.elements.localVars.value), parseVars(f.elements.globalVars.value), envVarsFor(null), envByKey());
+      const used = [...new Set([...f.elements.command.value.matchAll(/\{\{\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)\s*\}\}/g)].map(m => m[1]))];
+      $('#scriptVarHint').textContent = !used.length ? 'Use {{name}} in the script to insert a variable.'
+        : `Uses: ${used.join(', ')}` + (missing.length ? ` · not defined: ${missing.join(', ')}` : ' · all defined ✓');
+      $('#scriptVarHint').className = 'hint' + (missing.length ? ' warn' : '');
+    };
+    f.elements.command.oninput = f.elements.localVars.oninput = f.elements.globalVars.oninput = varHint;
+    varHint();
+    // Ask AI: shows a proposal; "Apply to form" fills the script (name/description/tags only when empty).
+    const out = $('#scriptAiOut');
+    out.hidden = true;
+    $('#scriptAiQ').value = '';
+    const ask = async () => {
+      const btn = $('#scriptAiBtn');
+      btn.disabled = true;
+      btn.textContent = '✦ Thinking…';
+      try {
+        const e = f.elements;
+        const r = await api.ai.script({ request: $('#scriptAiQ').value.trim(),
+          script: { name: e.name.value, description: e.description.value, command: e.command.value, vars: parseVars(e.localVars.value) },
+          globals: Object.keys(parseVars(e.globalVars.value)) });
+        const apply = () => {
+          e.command.value = r.command;
+          e.localVars.value = varsText({ ...parseVars(e.localVars.value), ...r.localVars });
+          if (!e.name.value.trim()) e.name.value = r.name;
+          if (!e.description.value.trim()) e.description.value = r.description;
+          if (!e.tags.value.trim()) e.tags.value = r.tags.join(', ');
+          e.root.checked = r.root;
+          varHint();
+          out.hidden = true;
+          toast('Applied — review it before saving');
+        };
+        out.replaceChildren(
+          el('div', { className: 'aiOutHead' }, el('b', { textContent: '✦ AI proposal' }), el('span', { className: 'aiRisk risk-' + r.risk, textContent: `risk: ${r.risk}` }),
+            el('span', { className: 'grow' }), el('button', { type: 'button', className: 'sm primary', textContent: 'Apply to form', onclick: apply }),
+            iconBtn('×', 'Close', () => { out.hidden = true; })),
+          el('div', { className: 'aiOutBody' }, // plain text: model output is never rendered as HTML
+            el('div', { textContent: r.explanation }),
+            el('pre', { className: 'mono', textContent: r.command }),
+            Object.keys(r.localVars).length ? el('div', { className: 'muted', textContent: 'Local variables: ' + varsText(r.localVars).replace(/\n/g, ' · ') }) : ''));
+      } catch (err) {
+        out.replaceChildren(el('div', { className: 'aiOutBody aiError' }));
+        showAiError(out.firstChild, err);
+      }
+      out.hidden = false;
+      btn.disabled = false;
+      btn.textContent = '✦ Ask AI';
+    };
+    $('#scriptAiBtn').onclick = ask;
+    // Enter would submit the form (closing the dialog): ask instead.
+    $('#scriptAiQ').onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); ask(); } };
+    // existing tags as one-click chips
+    const all = [...new Set(scripts.flatMap(y => y.tags || []))].sort();
+    $('#scriptTagPick').replaceChildren(...all.map(t => el('button', {
+      type: 'button', className: 'tchip', textContent: t,
+      onclick: () => {
+        const cur = f.elements.tags.value.split(',').map(y => y.trim()).filter(Boolean);
+        if (!cur.includes(t)) f.elements.tags.value = [...cur, t].join(', ');
+      },
+    })));
+    const dlg = $('#scriptDlg');
+    dlg.returnValue = '';
+    dlg.showModal();
+    dlg.addEventListener('close', async () => {
+      if (dlg.returnValue !== 'save') return;
+      const e = f.elements;
+      try {
+        await api.scripts.save({ id: e.id.value || undefined, name: e.name.value, description: e.description.value, command: e.command.value,
+          tags: e.tags.value, root: e.root.checked, confirm: e.confirm.checked, vars: parseVars(e.localVars.value) });
+        if (e.globalVars.value !== globalsBefore) await api.scripts.setGlobals(parseVars(e.globalVars.value));
+        load();
+      } catch (err) { toast(cleanErr(err), true); }
+    }, { once: true });
+  }
+  async function deleteScript(x) {
+    if (!confirm(`Delete script "${x.name}"?`)) return;
+    await api.scripts.delete(x.id);
+    load();
+  }
+  q('.sc-refresh').onclick = load;
+  q('.sc-add').onclick = () => editScript();
+  q('.sc-help').onclick = () => api.help.manual('scripting');
+  q('.sc-filter').oninput = render;
+  q('.sc-up').onclick = async () => {
+    try { const n = await api.scripts.import(); if (n) toast(`Imported ${n} script${n === 1 ? '' : 's'}`); load(); }
+    catch (e) { toast(`Import failed: ${cleanErr(e)}`, true); }
+  };
+  q('.sc-down').onclick = async () => {
+    try { const f = await api.scripts.export(); if (f) toast(`Exported to ${f}`); }
+    catch (e) { toast(cleanErr(e), true); }
+  };
+  return { load };
+}
+
+// ================= home: Scripts module =================
+let homeScriptsPanel;
+function homeScripts() {
+  if (homeScriptsPanel) return homeScriptsPanel;
+  const box = $('#scriptsTpl').content.firstElementChild.cloneNode(true);
+  box.classList.add('full');
+  box.querySelector('.sc-close').hidden = true;
+  $('#scriptsView').append(box);
+  return (homeScriptsPanel = makeScriptsPanel(box)); // managing only: Run lives in terminals
+}
+$('#srvImport').onclick = async () => {
+  try { const n = await api.servers.import(); if (n) { toast(`Imported ${n} server${n === 1 ? '' : 's'}`); await refreshServers(); renderServers(); } }
+  catch (e) { toast(e.message, true); }
+};
+$('#srvExport').onclick = async () => {
+  try { const f = await api.servers.export(); if (f) toast(`Exported to ${f}`); } catch (e) { toast(e.message, true); }
+};
+$('#scriptsManual').onclick = () => api.help.manual('scripting');
+
+// ================= home: Broadcast module =================
+// One terminal per pane (saved servers or localhost); keys typed in a checked pane go to every checked pane.
+const bcast = { panes: [], localNo: 0, scripts: null, mini: false };
+const bcastTargets = () => bcast.panes.filter(p => p.t?.id && p.chk.checked);
+function bcastSend(from, d) {
+  for (const p of $('#bcastOn').checked && from.chk.checked ? bcastTargets() : [from]) if (p.t?.id) api.ssh.write(p.t.id, d);
+}
+function paintBcast() {
+  const n = bcast.panes.length, on = bcast.panes.filter(p => p.chk.checked).length;
+  $('#bcastBadge').textContent = n ? `${on} of ${n} receiving` : '';
+  $('#bcastGrid').querySelector('.empty').hidden = n > 0;
+  $('#bcastAll').checked = n > 0 && on === n;
+  const bad = bcast.panes.filter(p => p.failed).length;
+  $('#bcastReconn').hidden = !bad;
+  $('#bcastReconn').replaceChildren(el('span', { className: 'reic', textContent: '⟳' }), ` Reconnect all (${bad})`);
+  $('#bcastAll').indeterminate = on > 0 && on < n;
+  for (const p of bcast.panes) p.el.classList.toggle('on', p.chk.checked && $('#bcastOn').checked);
+  bcastSave();
+}
+// Keep after restart: the pane list lives in localStorage; restored panes wait for Reconnect all.
+const bcastKeepOn = () => { try { return localStorage.getItem('bcastKeep') === 'on'; } catch { return false; } };
+function bcastSave() {
+  try {
+    localStorage.setItem('bcastKeep', $('#bcastKeep').checked ? 'on' : 'off');
+    localStorage.setItem('bcastPanes', JSON.stringify($('#bcastKeep').checked
+      ? bcast.panes.map(p => ({ id: p.s.local ? LOCAL : p.s.id, name: p.s.name, on: p.chk.checked })) : []));
+  } catch { /* not remembered */ }
+}
+$('#bcastKeep').checked = bcastKeepOn();
+$('#bcastKeep').onchange = bcastSave;
+function bcastRestore() {
+  if (!bcastKeepOn()) return;
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem('bcastPanes')) || []; } catch { /* nothing to reopen */ }
+  for (const x of list) {
+    const s = x.id === LOCAL ? { ...LOCAL_SERVER, name: x.name } : servers.find(y => y.id === x.id);
+    if (!s) continue;
+    if (s.local) bcast.localNo = Math.max(bcast.localNo, +x.name.split(' ')[1] || 0);
+    bcastAddPane(s, { connect: false, on: x.on });
+  }
+}
+// Minimized view: small panes and tiny text; double-click one to enlarge it (one at a time).
+const bcastFont = p => {
+  if (!p.t) return;
+  p.t.term.options.fontSize = bcast.mini && !p.el.classList.contains('big') ? 5 : 13;
+  p.t.refit();
+};
+function bcastMini() {
+  $('#bcastGrid').classList.toggle('mini', bcast.mini);
+  for (const p of bcast.panes) { p.el.classList.remove('big'); bcastFont(p); }
+}
+const setBcastMini = on => {
+  bcast.mini = on;
+  $('#bcastShrink').classList.toggle('on', on);
+  $('#bcastNormal').classList.toggle('on', !on);
+  bcastMini();
+};
+$('#bcastShrink').onclick = () => setBcastMini(true);
+$('#bcastNormal').onclick = () => setBcastMini(false);
+function bcastEnlarge(pane) {
+  if (!bcast.mini) return;
+  const on = !pane.el.classList.contains('big');
+  for (const p of bcast.panes) if (p.el.classList.contains('big')) { p.el.classList.remove('big'); bcastFont(p); }
+  pane.el.classList.toggle('big', on);
+  bcastFont(pane);
+  if (on) { pane.el.scrollIntoView({ block: 'nearest' }); pane.t?.term.focus(); }
+}
+$('#bcastOn').onchange = paintBcast;
+// Select all: checked when every terminal receives, dash when only some do.
+$('#bcastAll').onchange = e => { for (const p of bcast.panes) p.chk.checked = e.target.checked; paintBcast(); };
+// Add server: a tree of groups (native <details>), filtered by every field; stays open to add several.
+function bcastOptions() {
+  const f = $('#bcastQ').value.trim().toLowerCase();
+  const hit = s => !f || [s.name, s.host, s.username, s.group, s.details, s.port, ...(s.tags || [])].join(' ').toLowerCase().includes(f);
+  const tree = groupNames().map(g => {
+    const list = servers.filter(s => groupOf(s) === g && hit(s)).sort((a, b) => a.name.localeCompare(b.name));
+    if (!list.length) return null;
+    return el('details', { open: true }, tintGroup(el('summary', {}, el('span', { textContent: g }), el('small', { textContent: list.length })), g === UNGROUPED ? '' : g),
+      ...list.map(s => el('button', { type: 'button', className: 'bcitem', onclick: () => bcastAddPane(s) },
+        el('b', { textContent: s.name }), el('small', { className: 'mono', textContent: `${s.username || ''}@${s.host}` }))));
+  }).filter(Boolean);
+  $('#bcastTree').replaceChildren(...(tree.length ? tree : [el('p', { className: 'muted', textContent: 'No matching servers.' })]));
+}
+$('#bcastQ').oninput = bcastOptions;
+$('#bcastQ').onkeydown = e => { if (e.key === 'Escape') $('#bcastMenu').hidden = true; };
+$('#bcastAddBtn').onclick = () => {
+  $('#bcastMenu').hidden = !$('#bcastMenu').hidden;
+  if ($('#bcastMenu').hidden) return;
+  bcastOptions();
+  $('#bcastQ').focus();
+};
+document.addEventListener('mousedown', e => { if (!e.target.closest('.bcadd')) $('#bcastMenu').hidden = true; });
+$('#bcastLocal').onclick = () => bcastAddPane({ ...LOCAL_SERVER, name: `localhost ${++bcast.localNo}` });
+
+function bcastAddPane(s, { connect = true, on = true } = {}) {
+  const host = el('div', { className: 'xhost' });
+  const chk = el('input', { type: 'checkbox', checked: on });
+  const status = el('small', { className: 'muted' });
+  const reBtn = iconBtn('⟳', 'Reconnect this terminal', () => pane.connect(), 'x re');
+  const pane = { s, chk, connId: null, t: null, failed: false };
+  pane.setStatus = (text, cls = 'muted') => { status.textContent = text; status.className = cls; };
+  // Connection failed or dropped, or the shell ended: counted by "Reconnect failed".
+  pane.fail = (msg, cls = 'failed') => {
+    pane.failed = true;
+    pane.setStatus(msg, cls === 'failed' ? 'error' : 'muted');
+    pane.el.classList.add(cls);
+    paintBcast();
+  };
+  // (Re)connect in place: the pane, its position and its checkbox stay; the terminal starts fresh.
+  pane.connect = async () => {
+    pane.t?.dispose();
+    pane.t = null;
+    if (pane.connId && !s.local) api.ssh.disconnect(pane.connId);
+    pane.connId = null;
+    pane.failed = false;
+    pane.el.classList.remove('failed', 'idle');
+    pane.setStatus('connecting…');
+    paintBcast();
+    let connId;
+    try { connId = await api.ssh.connect(s.id); } catch (e) { return bcast.panes.includes(pane) && pane.fail(`failed: ${cleanErr(e)}`); }
+    if (!bcast.panes.includes(pane)) return s.local || api.ssh.disconnect(connId); // closed while connecting
+    pane.connId = connId;
+    pane.setStatus(s.local ? 'this computer' : `${s.username}@${s.host}`);
+    pane.t = makeTerm(host, connId, undefined, s.local ? LOCAL : s.id, { input: d => bcastSend(pane, d) });
+    bcastFont(pane);
+  };
+  chk.onchange = paintBcast;
+  pane.el = el('section', { className: 'bcpane' },
+    tintGroup(el('header', { title: 'Drag to reorder · double-click (Minimized) to enlarge' }, s.local ? el('span', { className: 'av up', title: 'This computer' }) : avMark(s.id, 'server'),
+      el('label', { className: 'chk', title: 'Receive broadcast keystrokes and scripts' }, chk, el('b', { textContent: s.name })),
+      status, el('span', { className: 'grow' }), reBtn, iconBtn('×', 'Close this terminal', () => bcastClose(pane), 'x')), s.local ? '' : s.group || ''),
+    host);
+  // Draggable only while the title bar is held, so text selection in the terminal still works.
+  pane.el.firstElementChild.onmousedown = () => { pane.el.draggable = true; };
+  pane.el.addEventListener('dragend', () => { pane.el.draggable = false; });
+  pane.el.addEventListener('mouseup', () => { pane.el.draggable = false; });
+  pane.el.addEventListener('dblclick', e => { if (!e.target.closest('button, label')) bcastEnlarge(pane); });
+  $('#bcastGrid').append(pane.el);
+  bcast.panes.push(pane);
+  paintAvail();
+  if (connect) return pane.connect();
+  pane.fail('not connected', 'idle');
+}
+function bcastClose(pane) {
+  bcast.panes.splice(bcast.panes.indexOf(pane), 1);
+  pane.t?.dispose();
+  if (pane.connId && !pane.s.local) api.ssh.disconnect(pane.connId);
+  pane.el.remove();
+  paintBcast();
+}
+// Order: drag title bars, or sort by group (Home's group order, localhost last). Kept with Keep after restart.
+const bcastReorder = () => { bcast.panes.sort((a, b) => [...$('#bcastGrid').children].indexOf(a.el) - [...$('#bcastGrid').children].indexOf(b.el)); paintBcast(); };
+dragReorder($('#bcastGrid'), '.bcpane', bcastReorder);
+$('#bcastSort').onchange = e => {
+  const by = e.target.value;
+  e.target.value = ''; // back to the label so the same order can be applied again
+  const order = groupNames();
+  const num = (x, y) => x.localeCompare(y, undefined, { numeric: true });
+  const up = p => (avail[p.s.id]?.server === 'up' ? 0 : avail[p.s.id] ? 1 : 2); // up, down, unknown
+  const key = {
+    group: p => (p.s.local ? order.length : order.indexOf(groupOf(p.s))),
+    avail: up,
+  }[by] || (() => 0);
+  const cmp = {
+    name: (a, b) => num(a.s.name, b.s.name),
+    ip: (a, b) => num(a.s.host || '', b.s.host || ''),
+  }[by] || ((a, b) => num(a.s.name, b.s.name));
+  // localhost has no IP/availability: always last
+  for (const p of [...bcast.panes].sort((a, b) => (a.s.local - b.s.local) || key(a) - key(b) || cmp(a, b))) $('#bcastGrid').append(p.el);
+  bcastReorder();
+};
+$('#bcastHelp').onclick = () => api.help.manual('broadcast');
+$('#bcastReconn').onclick = () => { for (const p of bcast.panes) if (p.failed) p.connect(); };
+// Scripts run on every checked terminal (whether or not keystroke broadcast is on).
+$('#bcastScripts').onclick = () => {
+  if (!bcast.scripts) {
+    const box = $('#scriptsTpl').content.firstElementChild.cloneNode(true);
+    $('#bcastView .bcbody').append(box);
+    box.querySelector('.sc-close').onclick = () => { box.hidden = true; $('#bcastScripts').classList.remove('on'); };
+    bcast.scripts = { box, panel: makeScriptsPanel(box, { runTitle: 'Run on every checked terminal', run: keys => {
+      const list = bcastTargets();
+      if (!list.length) return toast('No checked terminal is connected.', true);
+      for (const p of list) api.ssh.write(p.t.id, keys(p.s?.id));
+      toast(`Sent to ${list.length} terminal${list.length === 1 ? '' : 's'}`);
+    } }) };
+    bcast.scripts.box.hidden = true;
+  }
+  const { box, panel } = bcast.scripts;
+  box.hidden = !box.hidden;
+  $('#bcastScripts').classList.toggle('on', !box.hidden);
+  if (!box.hidden) panel.load();
+};
 
 // ================= server page =================
 const tailHandlers = new Map(); // tailId -> { data(chunk), end() }
@@ -749,6 +1691,7 @@ api.ssh.onHostKeyReplaced((serverId, k) => {
 
 api.ssh.onConnClosed((connId, msg) => {
   for (const v of views.values()) if (v.connId === connId) v.disconnected(msg);
+  for (const p of bcast.panes) if (p.connId === connId) p.fail(`disconnected${msg ? ': ' + msg : ''}`);
 });
 
 function closeServer(serverId) {
@@ -756,6 +1699,8 @@ function closeServer(serverId) {
   if (!v) return;
   v.dispose();
   views.delete(serverId);
+  paintReconnect();
+  saveTabs();
   show('home');
 }
 
@@ -765,16 +1710,23 @@ async function openServer(s) {
   const root = $('#serverTpl').content.firstElementChild.cloneNode(true);
   const q = sel => root.querySelector(sel);
   $('#views').append(root);
-  const tabEl = el('button', { className: 'tab', onclick: () => show(s.id) },
+  const tabEl = el('button', { className: 'tab', draggable: true, onclick: () => show(s.id) },
     el('span', { textContent: '▤ ' + s.name }),
     el('span', { className: 'x', textContent: '×', title: 'Disconnect', onclick: e => { e.stopPropagation(); closeServer(s.id); } }));
-  $('#tabs').append(tabEl);
+  $('#tabs .tabtools').before(tabEl);
 
-  const v = { root, tabEl, connId: null, panel: 'files' };
+  tabEl.dataset.sid = s.id;
+  const v = { root, tabEl, connId: null, panel: 'files', server: s, failed: false };
   views.set(s.id, v);
+  saveTabs();
 
   q('.sname').textContent = s.name;
-  q('.saddr').textContent = typeOf(s) === 'rdp' // the server page is the SSH side of an RDP entry
+  paintTabs();
+  if (s.local) { // only the Terminal module works without SSH
+    root.querySelectorAll('.srvbody > .side .navitem').forEach(b => (b.hidden = b.dataset.panel !== 'term'));
+    root.classList.add('localsrv');
+  }
+  q('.saddr').textContent = s.local ? 'This computer (local shell)' : typeOf(s) === 'rdp' // the server page is the SSH side of an RDP entry
     ? `${s.domain ? s.domain + '\\' : ''}${s.username}@${s.host}:${s.sshPort || 22} (SSH)`
     : `${s.username}@${s.host}:${s.port}`;
   q('.sdetails').textContent = q('.sdetails').title = s.details || '';
@@ -810,7 +1762,7 @@ async function openServer(s) {
     const sess = { host, title: `Session ${++sessNo}` };
     const titleEl = el('span', { className: 'ttitle', textContent: sess.title, title: 'Double-click to rename' });
     titleEl.ondblclick = e => { e.stopPropagation(); renameSession(sess, titleEl); };
-    sess.tabEl = el('div', { className: 'ttab', onclick: () => activateSession(sess) },
+    sess.tabEl = el('div', { className: 'ttab', draggable: true, onclick: () => activateSession(sess) },
       el('span', { className: 'tdot' }), titleEl,
       iconBtn('×', 'Close session', () => closeSession(sess), 'x'));
     q('.ttablist').append(sess.tabEl);
@@ -868,151 +1820,23 @@ async function openServer(s) {
   const openInTerminal = dir => runInTerminal(`cd ${shq(dir)}\r`);
 
   q('.tnew').onclick = () => newSession();
+  // Drag terminal session tabs to reorder; the list follows the new order.
+  dragReorder(q('.ttablist'), '.ttab', () => {
+    const order = [...q('.ttablist').children];
+    sessions.sort((a, b) => order.indexOf(a.tabEl) - order.indexOf(b.tabEl));
+  });
 
   // ---- scripts side panel ----
-  let scripts = [], dragId = null;
-  const activeTags = new Set(); // show scripts having ANY of these tags
-  let sortMode = 'manual';
-  try { sortMode = localStorage.getItem('scriptSort') || 'manual'; } catch { /* default */ }
-  q('.sc-sort').value = sortMode;
-  const lastRun = () => { try { return JSON.parse(localStorage.getItem('scriptLastRun')) || {}; } catch { return {}; } };
-
-  async function loadScripts() {
-    try { scripts = await api.scripts.list(); } catch (e) { toast(cleanErr(e), true); }
-    renderScripts();
-  }
-  const toggleTag = t => { activeTags[activeTags.has(t) ? 'delete' : 'add'](t); renderScripts(); };
-
-  function renderTags() {
-    const counts = new Map();
-    for (const x of scripts) for (const t of x.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
-    for (const t of activeTags) if (!counts.has(t)) activeTags.delete(t);
-    q('.sc-tags').replaceChildren(
-      ...[...counts.keys()].sort().map(t => el('button', {
-        className: 'tchip' + (activeTags.has(t) ? ' on' : ''), title: `Show scripts tagged "${t}"`, onclick: () => toggleTag(t),
-      }, t, el('small', { textContent: counts.get(t) }))),
-      ...(activeTags.size ? [el('button', { className: 'tchip clear', textContent: '✕ Clear', onclick: () => { activeTags.clear(); renderScripts(); } })] : []));
-  }
-
-  function renderScripts() {
-    renderTags();
-    const f = q('.sc-filter').value.toLowerCase();
-    let list = scripts
-      .filter(x => !f || `${x.name} ${x.description} ${x.command} ${(x.tags || []).join(' ')}`.toLowerCase().includes(f))
-      .filter(x => !activeTags.size || (x.tags || []).some(t => activeTags.has(t)));
-    if (sortMode === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name));
-    if (sortMode === 'recent') { const lr = lastRun(); list = [...list].sort((a, b) => (lr[b.id] || 0) - (lr[a.id] || 0)); }
-    const canDrag = sortMode === 'manual' && !f && !activeTags.size;
-    q('.sc-hint').textContent = sortMode !== 'manual' ? '' : canDrag ? 'Drag ⋮⋮ to change the order.' : 'Clear the search and tag filters to drag scripts into a new order.';
-    q('.sc-list').replaceChildren(...list.map(x => {
-      const li = el('li', { title: x.command, draggable: canDrag },
-        el('div', { className: 'sc-head' },
-          canDrag ? el('span', { className: 'grip', textContent: '⋮⋮', title: 'Drag to reorder' }) : null,
-          el('b', { textContent: x.name }),
-          el('span', { className: 'grow' }),
-          iconBtn('✎', 'Edit', () => editScript(x)),
-          iconBtn('🗑', 'Delete', () => deleteScript(x), 'icon danger'),
-          iconBtn('▶ Run', 'Run in the active terminal session', () => runScript(x), 'primary sm')),
-        x.description ? el('small', { textContent: x.description }) : null,
-        el('code', { className: 'mono', textContent: x.command.split('\n')[0] + (x.command.includes('\n') ? ' …' : '') }),
-        x.tags?.length ? el('div', { className: 'sc-tagrow' }, ...x.tags.map(t => el('span', {
-          className: 'tag' + (activeTags.has(t) ? ' on' : ''), textContent: t, title: `Filter by "${t}"`,
-          onclick: e => { e.stopPropagation(); toggleTag(t); },
-        }))) : null);
-      if (canDrag) {
-        li.ondragstart = e => { dragId = x.id; li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; };
-        li.ondragend = () => { dragId = null; li.classList.remove('dragging'); };
-        li.ondragover = e => {
-          if (!dragId) return;
-          e.preventDefault();
-          const r = li.getBoundingClientRect();
-          const after = e.clientY > r.top + r.height / 2;
-          li.classList.toggle('drop-after', after);
-          li.classList.toggle('drop-before', !after);
-        };
-        li.ondragleave = () => li.classList.remove('drop-after', 'drop-before');
-        li.ondrop = async e => {
-          e.preventDefault();
-          const after = li.classList.contains('drop-after');
-          li.classList.remove('drop-after', 'drop-before');
-          if (!dragId || dragId === x.id) return;
-          const ids = scripts.map(y => y.id).filter(id => id !== dragId);
-          ids.splice(ids.indexOf(x.id) + (after ? 1 : 0), 0, dragId);
-          scripts = ids.map(id => scripts.find(y => y.id === id));
-          renderScripts();
-          try { await api.scripts.reorder(ids); } catch (err) { toast(cleanErr(err), true); loadScripts(); }
-        };
-      }
-      return li;
-    }));
-  }
-  q('.sc-sort').onchange = () => {
-    sortMode = q('.sc-sort').value;
-    try { localStorage.setItem('scriptSort', sortMode); } catch { /* ignore */ }
-    renderScripts();
-  };
-  q('.sc-restore').onclick = async () => {
-    const n = await api.scripts.restoreBuiltins();
-    toast(n ? `Restored ${n} built-in script${n === 1 ? '' : 's'}` : 'All built-in scripts are already in your list.');
-    loadScripts();
-  };
-  function runScript(x) {
-    try { localStorage.setItem('scriptLastRun', JSON.stringify({ ...lastRun(), [x.id]: Date.now() })); } catch { /* ignore */ }
-    const body = x.command.replace(/\r\n/g, '\n').trimEnd();
-    if (!body.includes('\n')) return runInTerminal(body + '\r');
-    // multi-line: feed through a heredoc so blocks/functions run as one script
-    const interp = body.startsWith('#!') ? body.slice(2, body.indexOf('\n')).trim() : 'sh';
-    runInTerminal(`${interp} -s <<'ERATERM_SCRIPT'\r${body.replace(/\n/g, '\r')}\rERATERM_SCRIPT\r`);
-  }
-  function editScript(x = {}) {
-    const f = $('#scriptForm');
-    f.reset();
-    for (const k of ['id', 'name', 'description', 'command']) f.elements[k].value = x[k] || '';
-    f.elements.tags.value = (x.tags || []).join(', ');
-    // existing tags as one-click chips
-    const all = [...new Set(scripts.flatMap(y => y.tags || []))].sort();
-    $('#scriptTagPick').replaceChildren(...all.map(t => el('button', {
-      type: 'button', className: 'tchip', textContent: t,
-      onclick: () => {
-        const cur = f.elements.tags.value.split(',').map(y => y.trim()).filter(Boolean);
-        if (!cur.includes(t)) f.elements.tags.value = [...cur, t].join(', ');
-      },
-    })));
-    const dlg = $('#scriptDlg');
-    dlg.returnValue = '';
-    dlg.showModal();
-    dlg.addEventListener('close', async () => {
-      if (dlg.returnValue !== 'save') return;
-      const e = f.elements;
-      try {
-        await api.scripts.save({ id: e.id.value || undefined, name: e.name.value, description: e.description.value, command: e.command.value, tags: e.tags.value });
-        loadScripts();
-      } catch (err) { toast(cleanErr(err), true); }
-    }, { once: true });
-  }
-  async function deleteScript(x) {
-    if (!confirm(`Delete script "${x.name}"?`)) return;
-    await api.scripts.delete(x.id);
-    loadScripts();
-  }
+  const scBox = $('#scriptsTpl').content.firstElementChild.cloneNode(true);
+  scBox.hidden = true;
+  q('.panel.term').append(scBox);
+  const scPanel = makeScriptsPanel(scBox, { run: keys => runInTerminal(keys(s.id)), runTitle: 'Run in the active terminal session' });
   q('.tscripts').onclick = () => {
-    const p = q('.scripts');
-    p.hidden = !p.hidden;
-    q('.tscripts').classList.toggle('on', !p.hidden);
-    if (!p.hidden) loadScripts();
+    scBox.hidden = !scBox.hidden;
+    q('.tscripts').classList.toggle('on', !scBox.hidden);
+    if (!scBox.hidden) scPanel.load();
   };
-  q('.sc-close').onclick = () => { q('.scripts').hidden = true; q('.tscripts').classList.remove('on'); };
-  q('.sc-refresh').onclick = loadScripts;
-  q('.sc-add').onclick = () => editScript();
-  q('.sc-filter').oninput = renderScripts;
-  q('.sc-up').onclick = async () => {
-    try { const n = await api.scripts.import(); if (n) toast(`Imported ${n} script${n === 1 ? '' : 's'}`); loadScripts(); }
-    catch (e) { toast(`Import failed: ${cleanErr(e)}`, true); }
-  };
-  q('.sc-down').onclick = async () => {
-    try { const f = await api.scripts.export(); if (f) toast(`Exported to ${f}`); }
-    catch (e) { toast(cleanErr(e), true); }
-  };
+  scBox.querySelector('.sc-close').onclick = () => { scBox.hidden = true; q('.tscripts').classList.remove('on'); };
 
   // ---- side terminal (inside file manager) ----
   let sideTerm = null;
@@ -1519,7 +2343,7 @@ async function openServer(s) {
         state.set(k, { val, threshold: a.threshold, since: Date.now() });
         const msg = `${s.name}: ${KNAME[k]} at ${Math.round(val)}% (alert above ${a.threshold}%)`;
         toast('🔔 ' + msg, true);
-        try { new Notification('EranTerm alert', { body: msg }); } catch { /* notifications blocked */ }
+        notify('EranTerm alert', msg);
       } else if (val < a.threshold - 5) { firing[k] = false; state.delete(k); }
       else if (firing[k]) state.set(k, { ...state.get(k), val }); // keep the latest value for the tooltip
     }
@@ -1705,6 +2529,8 @@ async function openServer(s) {
     v.connId = null;
     stopTail();
     setStatus('DISCONNECTED — click to reconnect', 'err');
+    v.failed = true;
+    paintReconnect();
     if (msg) toast(`${s.name}: ${msg}`, true);
   };
   v.dispose = () => {
@@ -1718,24 +2544,23 @@ async function openServer(s) {
     root.remove();
     tabEl.remove();
   };
-  q('.status').onclick = () => {
-    if (v.connId) return;
-    closeServer(s.id);
-    openServer(servers.find(x => x.id === s.id) || s);
-  };
+  q('.status').onclick = () => { if (!v.connId) reconnect(s.id); };
 
-  pickPanel('files');
+  pickPanel(s.local ? 'term' : defaultPanel());
   show(s.id);
   try {
     v.connId = await api.ssh.connect(s.id);
   } catch (e) {
     setStatus('FAILED — click to retry', 'err');
+    v.failed = true;
+    paintReconnect();
     toast(`${s.name}: ${cleanErr(e)}`, true);
     return;
   }
   if (!views.has(s.id)) return api.ssh.disconnect(v.connId); // tab closed while connecting
   setStatus('● CONNECTED', 'on');
   pickPanel(v.panel);
+  if (s.local) v.pollMetrics = () => {}; // no metrics without SSH
   v.pollMetrics();
 }
 
@@ -1744,7 +2569,17 @@ setInterval(() => {
   for (const v of views.values()) if (v.connId && (!v.root.hidden || v.hasAlerts?.())) v.pollMetrics();
 }, 5000);
 
-refreshServers();
+loadAcct().then(refreshServers).then(() => {
+  bcastRestore();
+  if (!restoreTabsOn()) return;
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem('openTabs')) || []; } catch { /* nothing to reopen */ }
+  for (const sid of ids) {
+    const s = sid === LOCAL ? LOCAL_SERVER : servers.find(x => x.id === sid);
+    if (s) openServer(s);
+  }
+  show('home');
+});
 
 // ================= foldable side menus (one state for all menus) =================
 const setFolded = on => {
@@ -1773,3 +2608,163 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('click', e => {
   if (e.target.closest('.fold')) setFolded(!document.body.classList.contains('folded'));
 });
+
+// ================= footer: quick toggles =================
+$('#ftMenu').onclick = () => setFolded(!document.body.classList.contains('folded'));
+
+// ================= side menu sections: click a heading to fold it =================
+{
+  let shut = [];
+  try { shut = JSON.parse(localStorage.getItem('navShut')) || []; } catch { /* all open */ }
+  for (const h of document.querySelectorAll('h6.navsec')) {
+    const grp = document.querySelector(`.navgrp[data-grp="${h.dataset.sec}"]`);
+    const paint = () => { grp.classList.toggle('closed', shut.includes(h.dataset.sec)); h.classList.toggle('closed', shut.includes(h.dataset.sec)); };
+    h.onclick = () => {
+      shut = shut.includes(h.dataset.sec) ? shut.filter(x => x !== h.dataset.sec) : [...shut, h.dataset.sec];
+      try { localStorage.setItem('navShut', JSON.stringify(shut)); } catch { /* not remembered */ }
+      paint();
+    };
+    paint();
+  }
+}
+
+// ================= Environments page: environments → groups → servers =================
+// Delete warning: what goes and what stays, one fact per line.
+function confirmDeleteEnv(e) {
+  const nGroups = [...new Set([...savedGroups, ...servers.map(s => s.group).filter(Boolean)])].filter(g => envOfGroup(g) === e.id).length;
+  const nServers = servers.filter(s => envOfServer(s) === e.id).length;
+  const line = (k, v, cls = '') => el('div', { className: 'delrow ' + cls }, el('span', { textContent: k }), el('b', { textContent: v }));
+  return ask({ title: `Delete environment "${e.name}"?`, danger: true, ok: 'Delete environment', body: [
+    el('div', { className: 'delbox' },
+      line('Groups', String(nGroups)), line('Servers', String(nServers)), line('Parameters', String(Object.keys(e.vars || {}).length), 'gone')),
+    el('p', { className: 'hint', textContent: `The environment and its parameters are deleted. Its groups and servers move to "${envById('local')?.name}". No servers are deleted.` }),
+  ] });
+}
+async function deleteEnv(e) {
+  if (!await confirmDeleteEnv(e)) return;
+  try { await api.envs.delete(e.id); toast(`Environment ${e.name} deleted`); await refreshServers(); } catch (err) { toast(cleanErr(err), true); }
+}
+async function moveGroup(g, envId) {
+  try { await api.groups.save(g, g, groupColors[g] || '', envId); toast(`Group ${g} moved to ${envById(envId)?.name}`); await refreshServers(); } catch (err) { toast(cleanErr(err), true); }
+}
+// Environments page state: cards start folded; groups inside start open.
+// (iconBtn stops the click, so header buttons don't also fold the card.)
+const envUi = { open: new Set(), shut: new Set(), q: '', sort: '' };
+function renderEnvPage() {
+  $('#envsBadge').textContent = `${envs.list.length}`;
+  const allGroups = [...new Set([...savedGroups, ...servers.map(s => s.group).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+  const q = envUi.q;
+  const has = (...v) => v.some(x => String(x || '').toLowerCase().includes(q));
+  const srvMatch = s => has(s.name, s.host, s.group, s.details, ...(s.tags || []));
+  const info = e => {
+    const names = allGroups.filter(g => envOfGroup(g) === e.id);
+    return { e, names, loose: servers.filter(s => !s.group && envOfServer(s) === e.id), total: servers.filter(s => envOfServer(s) === e.id).length };
+  };
+  let rows = envs.list.map(info);
+  if (q) rows = rows.filter(r => has(r.e.name, r.e.description) || r.names.some(g => has(g)) || servers.some(s => envOfServer(s) === r.e.id && srvMatch(s)));
+  const by = { name: (a, b) => a.e.name.localeCompare(b.e.name), servers: (a, b) => b.total - a.total || a.e.name.localeCompare(b.e.name), groups: (a, b) => b.names.length - a.names.length || a.e.name.localeCompare(b.e.name) }[envUi.sort];
+  if (by) rows.sort(by);
+  const chips = list => el('div', { className: 'envsrv' }, ...(list.length ? list.map(s => el('span', { className: 'dchip on', title: s.host },
+    el('b', { textContent: s.name }), el('small', { className: 'mono', textContent: s.host }))) : [el('small', { className: 'muted', textContent: 'no servers' })]));
+  $('#envsList').replaceChildren(...(rows.length ? rows.map(({ e, names, loose, total }) => {
+    const open = envUi.open.has(e.id) || !!q; // a search opens the matches
+    const nGroups = `${names.length} group${names.length === 1 ? '' : 's'}`, nSrv = `${total} server${total === 1 ? '' : 's'}`;
+    const groupRows = names.map(g => {
+      const shut = envUi.shut.has(e.id + '|' + g), members = servers.filter(s => s.group === g);
+      const sel = el('select', { title: 'Move this group to another environment', disabled: e.id === 'team', onclick: ev => ev.stopPropagation() },
+        ...envs.list.filter(x => x.id !== 'team' || e.id === 'team').map(x => el('option', { value: x.id, textContent: `${envIcon(x)} ${x.name}` })));
+      sel.value = e.id;
+      sel.onchange = () => moveGroup(g, sel.value);
+      return tintGroup(el('div', { className: 'envgrow' },
+        el('div', { className: 'envghead', onclick: () => { const k = e.id + '|' + g; envUi.shut.has(k) ? envUi.shut.delete(k) : envUi.shut.add(k); renderEnvPage(); } },
+          el('span', { className: 'caret', textContent: shut ? '▸' : '▾' }), el('b', { textContent: g }),
+          el('small', { className: 'muted', textContent: `${members.length} server${members.length === 1 ? '' : 's'}` }),
+          el('span', { className: 'grow' }), sel,
+          iconBtn('✎', `Edit group ${g}`, () => editGroup(g))),
+        shut ? null : chips(q ? members.filter(s => !has(g) && !has(e.name) ? srvMatch(s) : true) : members)), g);
+    });
+    const card = el('section', { className: 'dcard envcard' + (open ? '' : ' folded') },
+      el('header', { className: 'envhead', onclick: () => { envUi.open.has(e.id) ? envUi.open.delete(e.id) : envUi.open.add(e.id); renderEnvPage(); } },
+        el('span', { className: 'caret', textContent: open ? '▾' : '▸' }),
+        el('b', { textContent: `${envIcon(e)} ${e.name}` }),
+        el('small', { className: 'muted', textContent: `${nGroups} · ${nSrv}` }),
+        el('span', { className: 'grow' }),
+        ...(e.id === 'team' ? [] : [iconBtn('＋', 'New group in this environment', () => editGroup('', e.id))]),
+        iconBtn('✎', 'Edit environment (name, description, color, parameters)', () => editEnv(e.id)),
+        ...(!e.builtin ? [iconBtn('🗑', 'Delete environment', () => deleteEnv(e), 'icon danger')] : [])),
+      // folded: short summary line (description, group names)
+      !open ? el('div', { className: 'envsum' },
+        e.description ? el('span', { textContent: e.description }) : null,
+        el('small', { className: 'muted', textContent: [names.length ? `Groups: ${names.slice(0, 6).join(', ')}${names.length > 6 ? ` +${names.length - 6}` : ''}` : 'No groups', loose.length ? `${loose.length} ungrouped` : ''].filter(Boolean).join(' · ') })) : null,
+      open && e.description ? el('p', { className: 'envdesc', textContent: e.description }) : null,
+      open && names.length ? el('div', { className: 'envlinks' },
+        el('a', { href: '#', textContent: 'Collapse all', onclick: ev => { ev.preventDefault(); names.forEach(g => envUi.shut.add(e.id + '|' + g)); renderEnvPage(); } }), ' · ',
+        el('a', { href: '#', textContent: 'Expand all', onclick: ev => { ev.preventDefault(); names.forEach(g => envUi.shut.delete(e.id + '|' + g)); renderEnvPage(); } })) : null,
+      ...(open ? groupRows : []),
+      open && loose.length ? el('div', { className: 'envgrow' }, el('div', { className: 'envghead' }, el('b', { textContent: 'Ungrouped' })), chips(loose)) : null,
+      open && !groupRows.length && !loose.length ? el('small', { className: 'muted', textContent: 'Empty.' }) : null);
+    card.style.setProperty('--ec', e.color || 'var(--line)');
+    return card;
+  }) : [el('p', { className: 'empty', textContent: 'No environment matches.' })]));
+}
+$('#envsQ').oninput = e => { envUi.q = e.target.value.trim().toLowerCase(); renderEnvPage(); };
+$('#envsSort').onchange = e => { envUi.sort = e.target.value; renderEnvPage(); };
+$('#envsFoldAll').onclick = () => { envUi.open.clear(); renderEnvPage(); };
+$('#envsUnfoldAll').onclick = () => { envUi.open = new Set(envs.list.map(e => e.id)); renderEnvPage(); };
+$('#envsNew').onclick = () => editEnv(null);
+$('#envsNewGroup').onclick = () => editGroup();
+
+// ================= footer: account (left) =================
+function paintAcct() {
+  const a = acctInfo, box = $('#ftAcct');
+  if (!box) return;
+  if (!a.signedIn) {
+    box.replaceChildren(el('button', { title: a.configured ? 'Sign in or sign up with Google' : 'Account settings', textContent: '👤 Sign in / Sign up',
+      onclick: async e => {
+        if (!a.configured) { await openSettings(); return settingsTab('account'); }
+        e.currentTarget.disabled = true;
+        try { toast('Finish signing in in your browser…'); acctInfo = await api.account.signIn(); } catch (err) { toast(cleanErr(err), true); }
+        paintAcct();
+      } }));
+    return;
+  }
+  box.replaceChildren(el('span', { className: 'ftuser', title: a.email, textContent: `👤 ${a.name || (a.email || '').split('@')[0]}` }),
+    el('button', { title: 'Account settings: sign out or change settings', textContent: '⎋',
+      onclick: async () => { await openSettings(); settingsTab('account'); } }));
+}
+paintAcct();
+
+// ================= feature flags (hidden Settings tab: click "Notifications" 10 times) =================
+// Add a feature: put it here and tag its element data-feature="<id>"; off = hidden. Default is `on`.
+const FEATURES = [
+  { id: 'envs', label: 'Environments page', desc: 'Side menu → Environments: manage environments, groups and servers.', on: true },
+];
+const flagState = () => { try { return JSON.parse(localStorage.getItem('featureFlags')) || {}; } catch { return {}; } };
+const featureOn = id => flagState()[id] ?? FEATURES.find(f => f.id === id)?.on ?? false;
+function applyFeatures() {
+  for (const e of document.querySelectorAll('[data-feature]')) e.hidden = !featureOn(e.dataset.feature);
+  if (!featureOn('envs') && homeMode === 'envs') setMode('all');
+}
+function renderFlags() {
+  $('#flagsList').replaceChildren(...FEATURES.map(f => {
+    const cb = el('input', { type: 'checkbox', checked: featureOn(f.id) });
+    cb.onchange = () => {
+      try { localStorage.setItem('featureFlags', JSON.stringify({ ...flagState(), [f.id]: cb.checked })); } catch { /* not remembered */ }
+      applyFeatures();
+    };
+    return el('label', { className: 'row' }, cb, el('b', { textContent: f.label }), el('small', { className: 'muted', textContent: ' — ' + f.desc }));
+  }));
+}
+{
+  const tab = $('#flagsTab'), notify = document.querySelector('#settingsForm [data-tab="notify"]');
+  let clicks = 0;
+  try { tab.hidden = localStorage.getItem('flagsRevealed') !== '1'; } catch { /* stays hidden */ }
+  notify.addEventListener('click', () => {
+    if (!tab.hidden || ++clicks < 10) return;
+    tab.hidden = false;
+    try { localStorage.setItem('flagsRevealed', '1'); } catch { /* revealed for this session only */ }
+    toast('Feature flags unlocked');
+  });
+  tab.addEventListener('click', renderFlags);
+  applyFeatures();
+}

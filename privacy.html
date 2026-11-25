@@ -1,0 +1,106 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'">
+<title>EranTerm Privacy Policy</title>
+<style>
+  :root { --bg: #0b0d10; --panel: #111418; --line: #232830; --fg: #e3e6eb; --muted: #9aa3ad; --accent: #3ddc5f; color-scheme: dark; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f7f9; --panel: #fff; --line: #d9dde3; --fg: #1d2127; --muted: #4f5864; --accent: #1a9a3a; color-scheme: light; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 -apple-system, system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 24px 60px; }
+  .brand { font-size: 32px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+  .brand span { color: var(--accent); }
+  h2 { margin: 32px 0 6px; font-size: 18px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  h3 { margin: 18px 0 4px; font-size: 15px; }
+  p, li { color: var(--fg); }
+  .muted { color: var(--muted); }
+  nav { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; margin: 18px 0; columns: 2; }
+  nav a { display: block; color: var(--accent); text-decoration: none; }
+  a { color: var(--accent); }
+  kbd, code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Menlo, monospace; }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow: auto; }
+  pre code { border: 0; padding: 0; background: none; }
+  .note { border-left: 3px solid var(--accent); background: var(--panel); padding: 8px 12px; border-radius: 0 6px 6px 0; }
+  header.top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 8px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header.top .logo { font-weight: 700; font-size: 18px; letter-spacing: -.02em; color: var(--fg); text-decoration: none; }
+  header.top .logo span { color: var(--accent); }
+  header.top .menu { display: flex; align-items: center; gap: 4px; }
+  header.top .menu a, header.top .menu button { color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; text-decoration: none; }
+  header.top .menu a:hover, header.top .menu button:hover { background: var(--bg); color: var(--accent); }
+  header.top input { width: 220px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; font: inherit; }
+  header.top input:focus { outline: 0; border-color: var(--accent); }
+  header.top .grow { flex: 1; }
+  h2, nav { scroll-margin-top: 56px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="#" title="Top">Eran<span>Term</span> <small class="muted">Privacy Policy</small></a>
+  <span class="menu">
+    <a href="manual.html">☰ Manual</a>
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="terms.html">Terms &amp; Conditions</a>
+    <button id="print" title="Print or save as PDF">⎙ Print</button>
+  </span>
+  <span class="grow"></span>
+  <input id="q" type="search" placeholder="Search this page…" autocomplete="off">
+  <span class="menu"><button id="close" title="Close (Esc)">✕ Close</button></span>
+</header>
+<main>
+  <h1 class="brand">Eran<span>Term</span></h1>
+  <p class="muted">Privacy Policy · Last updated: November 24, 2026</p>
+
+  <h2>Summary</h2>
+  <p>EranTerm is a desktop app that runs on your computer. It stores your configuration locally and has no server of its own: we do not receive, store or see your servers, passwords, keys, files or terminal content. The only time data leaves your computer is when you choose to use a feature that needs it, as described below.</p>
+
+  <h2>Data stored on your computer</h2>
+  <ul>
+    <li>Your servers, saved users, groups, environments, scripts, variables, deployments and settings, in the app's data folder.</li>
+    <li>Passwords and API keys, encrypted with your operating system's keychain. SSH keys are read from the paths you choose and are not copied.</li>
+    <li>The app log and the Action Log (an audit trail of what you did in the app). They never contain passwords, keys or file contents. You can delete them at any time.</li>
+  </ul>
+
+  <h2>Google sign-in (optional)</h2>
+  <p>Signing in with Google is optional. Without it, everything stays on your computer.</p>
+  <ul>
+    <li><b>What we access:</b> your Google email address and, through the <code>drive.appdata</code> scope, a hidden application data folder in your own Google Drive. EranTerm cannot see or change any other file in your Drive.</li>
+    <li><b>Why:</b> to back up your configuration to that hidden folder and restore it on your other computers, and to identify you for team sharing.</li>
+    <li><b>What is backed up:</b> servers, saved users, groups, environments, scripts, variables, deployments and settings. <b>Never</b> backed up: passwords, SSH keys, AI API keys, logs, the Action Log and host keys.</li>
+    <li><b>Where it goes:</b> directly between your computer and your own Google account. It does not pass through any server operated by us.</li>
+    <li><b>Team sharing:</b> if you use a team, the items you publish to the team are stored in a team file in a team administrator's Google Drive and shared with the members that administrator added. Members can see those items and your email address.</li>
+    <li><b>Removing it:</b> Settings → Account → Sign out keeps your data on your computer and stops syncing. To delete the backup: Google Drive → Settings → Manage apps → EranTerm → Delete hidden app data. You can also revoke access at myaccount.google.com/permissions.</li>
+  </ul>
+  <p>EranTerm's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. We use Google user data only to provide the backup and sharing features described here. We do not sell it, use it for advertising, or allow humans to read it.</p>
+
+  <h2>AI assistant (optional)</h2>
+  <p>If you turn on the AI assistant and enter your own API key, the text you ask about (for example the terminal or log lines you select, and your question) is sent to the AI provider you chose, using your key, so it can answer. That provider's own privacy policy applies to that data. Commands the AI suggests only run if you approve them. EranTerm does not send this data anywhere else.</p>
+
+  <h2>Connections to your servers</h2>
+  <p>EranTerm connects from your computer directly to the servers you add (SSH, SFTP, and remote desktop clients). Those connections do not go through us.</p>
+
+  <h2>Updates</h2>
+  <p>The app checks GitHub (github.com/eranterm/eranterm) for new releases. That request is made to GitHub and is subject to GitHub's privacy policy; it contains no data from your configuration.</p>
+
+  <h2>What we do not do</h2>
+  <ul>
+    <li>No analytics, advertising or tracking.</li>
+    <li>No selling or sharing of your data.</li>
+    <li>No collection of your servers, credentials or terminal content.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>EranTerm is a tool for system administrators and is not directed to children.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, the new version is published with the app and the date above is updated.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or requests: open an issue at <a href="https://github.com/eranterm/eranterm/issues">github.com/eranterm/eranterm/issues</a>.</p>
+
+</main>
+<script src="manual.js"></script>
+</body>
+</html>

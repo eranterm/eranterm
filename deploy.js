@@ -5,14 +5,31 @@ const net = require('node:net');
 const path = require('node:path');
 const { shq } = require('./util');
 
-const STAGES = ['pre', 'files', 'deploy', 'post'];
-const LABEL = { pre: 'Pre-deploy', files: 'Files', deploy: 'Deploy', post: 'Post-deploy' };
+// A deployment is an ordered list of steps, built in the Deployments builder:
+//   { type: 'command', command }  |  { type: 'check', check: { type: 'log'|'port'|'exit', ... } }  |  { type: 'files', files: [{ local, remoteDir }] }
+// Older saves used fixed stages (pre / files / deploy / post); toSteps() converts them in that order.
+function toSteps(d) {
+  if (Array.isArray(d.steps)) return d.steps;
+  const steps = [];
+  const stage = k => {
+    for (const command of d.stages?.[k]?.commands || []) steps.push({ type: 'command', command });
+    for (const check of d.stages?.[k]?.checks || []) steps.push({ type: 'check', check });
+  };
+  stage('pre');
+  if (d.files?.length) steps.push({ type: 'files', files: d.files });
+  stage('deploy');
+  stage('post');
+  return steps;
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const validCheck = c =>
+const validCheck = c => !!c && (
   (c.type === 'port' && Number(c.port) > 0) ||
   (c.type === 'log' && c.file && c.pattern) ||
-  (c.type === 'exit' && String(c.command || '').trim());
+  (c.type === 'exit' && String(c.command || '').trim()));
+// Steps the engine runs (empty ones are skipped; the progress view mirrors this).
+const validStep = st => (st.type === 'command' ? !!String(st.command || '').trim()
+  : st.type === 'check' ? validCheck(st.check) : st.type === 'files' ? !!st.files?.length : false);
 
 function checkLabel(c) {
   if (c.type === 'port') return `TCP ${c.host || '<server>'}:${c.port} responds`;
@@ -57,44 +74,38 @@ async function runCheck(c, target, sess, signal) {
 async function runTarget(dep, target, io, signal) {
   const emit = ev => io.emit({ target: target.id, ...ev });
   const log = (text, level = 'info') => emit({ kind: 'log', text, level });
-  const stage = (name, state) => emit({ kind: 'stage', stage: name, state });
+  const step = (key, state) => emit({ kind: 'stage', stage: key, state }); // key = 's<index in dep.steps>'
   let sess, warnings = 0, status;
   emit({ kind: 'status', status: 'running' });
   try {
     log(`Connecting to ${target.name} (${target.host})…`);
     sess = await io.connect(target);
-    for (const st of STAGES) {
+    const steps = toSteps(dep);
+    for (let i = 0; i < steps.length; i++) {
+      const st = steps[i], key = 's' + i, n = i + 1;
+      if (!validStep(st)) continue;
       if (signal?.aborted) throw new Error('Cancelled');
-      if (st === 'files') {
-        if (!dep.files?.length) continue;
-        stage(st, 'running');
-        for (const f of dep.files) {
+      step(key, 'running');
+      if (st.type === 'files') {
+        for (const f of st.files) {
+          if (signal?.aborted) throw new Error('Cancelled');
           log(`↑ ${path.basename(f.local)} → ${f.remoteDir || '~'}`, 'cmd');
           await sess.upload(f.local, f.remoteDir);
         }
-        stage(st, 'ok');
-        continue;
-      }
-      const cmds = (dep.stages?.[st]?.commands || []).filter(c => String(c).trim());
-      const checks = (dep.stages?.[st]?.checks || []).filter(validCheck);
-      if (!cmds.length && !checks.length) continue;
-      stage(st, 'running');
-      let stageWarn = false;
-      for (const cmd of cmds) {
-        if (signal?.aborted) throw new Error('Cancelled');
-        const lines = cmd.trim().split('\n');
+      } else if (st.type === 'command') {
+        const lines = st.command.trim().split('\n');
         log(`$ ${lines[0]}${lines.length > 1 ? ` … (+${lines.length - 1} lines)` : ''}`, 'cmd');
-        const r = await sess.exec(cmd, d => log(d, 'out'));
-        if (r.code !== 0) { stage(st, 'failed'); throw new Error(`${LABEL[st]}: command exited with code ${r.code}`); }
-      }
-      for (const c of checks) {
+        const r = await sess.exec(st.command, d => log(d, 'out'));
+        if (r.code !== 0) { step(key, 'failed'); throw new Error(`Step ${n}: command exited with code ${r.code}`); }
+      } else {
+        const c = st.check;
         log(`? ${checkLabel(c)}${Number(c.timeout) ? ` (wait up to ${c.timeout}s)` : ''}`, 'check');
         const r = await runCheck(c, target, sess, signal);
         if (r.ok) log(`✓ ${r.detail}`, 'ok');
-        else if (c.onFail === 'alert') { warnings++; stageWarn = true; log(`⚠ ${r.detail} — alert only, continuing`, 'warn'); }
-        else { stage(st, 'failed'); throw new Error(`${LABEL[st]} verification failed: ${checkLabel(c)} (${r.detail})`); }
+        else if (c.onFail === 'alert') { warnings++; log(`⚠ ${r.detail} — alert only, continuing`, 'warn'); step(key, 'warn'); continue; }
+        else { step(key, 'failed'); throw new Error(`Step ${n} verification failed: ${checkLabel(c)} (${r.detail})`); }
       }
-      stage(st, stageWarn ? 'warn' : 'ok');
+      step(key, 'ok');
     }
     status = warnings ? 'warning' : 'success';
     log(warnings ? `Done with ${warnings} alert${warnings > 1 ? 's' : ''}.` : 'Done.', warnings ? 'warn' : 'ok');
@@ -123,4 +134,4 @@ async function runDeployment(dep, targets, io, signal) {
   return results;
 }
 
-module.exports = { runDeployment, runCheck, checkLabel, tcpOpen, STAGES };
+module.exports = { runDeployment, runCheck, checkLabel, tcpOpen, toSteps, validStep };

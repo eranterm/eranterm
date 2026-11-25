@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'">
+<title>EranTerm Terms & Conditions</title>
+<style>
+  :root { --bg: #0b0d10; --panel: #111418; --line: #232830; --fg: #e3e6eb; --muted: #9aa3ad; --accent: #3ddc5f; color-scheme: dark; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f7f9; --panel: #fff; --line: #d9dde3; --fg: #1d2127; --muted: #4f5864; --accent: #1a9a3a; color-scheme: light; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 -apple-system, system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 24px 60px; }
+  .brand { font-size: 32px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+  .brand span { color: var(--accent); }
+  h2 { margin: 32px 0 6px; font-size: 18px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  h3 { margin: 18px 0 4px; font-size: 15px; }
+  p, li { color: var(--fg); }
+  .muted { color: var(--muted); }
+  nav { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; margin: 18px 0; columns: 2; }
+  nav a { display: block; color: var(--accent); text-decoration: none; }
+  a { color: var(--accent); }
+  kbd, code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Menlo, monospace; }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow: auto; }
+  pre code { border: 0; padding: 0; background: none; }
+  .note { border-left: 3px solid var(--accent); background: var(--panel); padding: 8px 12px; border-radius: 0 6px 6px 0; }
+  header.top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 8px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header.top .logo { font-weight: 700; font-size: 18px; letter-spacing: -.02em; color: var(--fg); text-decoration: none; }
+  header.top .logo span { color: var(--accent); }
+  header.top .menu { display: flex; align-items: center; gap: 4px; }
+  header.top .menu a, header.top .menu button { color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; text-decoration: none; }
+  header.top .menu a:hover, header.top .menu button:hover { background: var(--bg); color: var(--accent); }
+  header.top input { width: 220px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; font: inherit; }
+  header.top input:focus { outline: 0; border-color: var(--accent); }
+  header.top .grow { flex: 1; }
+  h2, nav { scroll-margin-top: 56px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="index.html" title="Home">Eran<span>Term</span> <small class="muted">Terms & Conditions</small></a>
+  <span class="menu">
+    <a href="index.html">Home</a>
+    <a href="help.html">☰ Help</a>
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="terms.html">Terms &amp; Conditions</a>
+    <button id="print" title="Print or save as PDF">⎙ Print</button>
+  </span>
+  <span class="grow"></span>
+  <input id="q" type="search" placeholder="Search this page…" autocomplete="off">
+</header>
+<main>
+  <h1 class="brand">Eran<span>Term</span></h1>
+  <p class="muted">Terms & Conditions · Last updated: November 24, 2026</p>
+
+  <h2>1. Acceptance</h2>
+  <p>By installing or using EranTerm you agree to these Terms &amp; Conditions. If you do not agree, do not use the app.</p>
+
+  <h2>2. What EranTerm is</h2>
+  <p>EranTerm is a desktop application for managing servers: terminals, file transfer, logs, metrics, scripts, deployments and an optional AI assistant. It runs on your computer and connects directly to the servers you configure.</p>
+
+  <h2>3. Your responsibilities</h2>
+  <ul>
+    <li>You may only connect to, run commands on, or change systems you are authorized to access.</li>
+    <li>You are responsible for the commands, scripts, deployments, file operations and broadcasts you run, including anything you approve from the AI assistant. Review them before you run them, especially on production systems and when you run on many servers at once.</li>
+    <li>You are responsible for keeping your computer, credentials and Google account secure.</li>
+    <li>You must comply with applicable laws and with the terms of any third-party service you use with EranTerm (for example Google and your AI provider).</li>
+  </ul>
+
+  <h2>4. Google account and third-party services</h2>
+  <p>Signing in with Google, Google Drive backup, team sharing and AI providers are optional and are provided by third parties under their own terms and privacy policies. How EranTerm handles your data is described in the <a href="privacy.html">Privacy Policy</a>. Availability of those services is outside our control.</p>
+
+  <h2>5. AI assistant</h2>
+  <p>AI output can be wrong or unsafe. EranTerm shows suggested commands and runs them only after you approve. You use the assistant at your own risk and with your own API key and usage costs.</p>
+
+  <h2>6. Intellectual property</h2>
+  <p>EranTerm and its source code are owned by their author. Third-party components remain under their own licenses. You keep ownership of your own data, scripts and configuration.</p>
+
+  <h2>7. No warranty</h2>
+  <p>EranTerm is provided "as is" and "as available", without warranties of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. We do not guarantee it is error-free, uninterrupted, or that it will not cause data loss or service interruption on systems you manage.</p>
+
+  <h2>8. Limitation of liability</h2>
+  <p>To the maximum extent permitted by law, the author is not liable for any indirect, incidental, special, consequential or punitive damages, or for loss of data, profits, or business, or downtime, arising from your use of EranTerm, even if advised of the possibility. Total liability for any claim is limited to the amount you paid for the app, which is zero if it was free.</p>
+
+  <h2>9. Termination</h2>
+  <p>You may stop using EranTerm at any time by uninstalling it. We may stop providing or updating the app at any time. Sections that by their nature should survive (such as 7 and 8) continue to apply.</p>
+
+  <h2>10. Changes</h2>
+  <p>We may update these terms. The updated version is published with the app with a new date; continuing to use the app means you accept it.</p>
+
+  <h2>11. Contact</h2>
+  <p>Questions: <a href="mailto:eranterm@gmail.com">eranterm@gmail.com</a> or open an issue at <a href="https://github.com/eranterm/eranterm/issues">github.com/eranterm/eranterm/issues</a>.</p>
+
+</main>
+<script src="manual.js"></script>
+</body>
+</html>

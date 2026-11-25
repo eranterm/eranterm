@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav id="tabs"><button id="homeTab" class="tab active">⌂ Home</button></nav>
+  <nav id="tabs"><button id="homeTab" class="tab active">⌂ Home</button><span class="tabtools"><button id="reconnAll" class="sm" hidden title="Reconnect every open server tab whose connection failed or dropped"></button><button id="localTab" class="tabplus" title="Open a localhost terminal">+<small>localhost</small></button></span></nav>
 
   <div id="views">
     <!-- ===== Home ===== -->
@@ -17,14 +17,25 @@
         <button class="fold" title="Collapse / expand menu">‹</button>
         <div class="brand">E<span class="lbl">ran</span><span class="g lbl">Term</span></div>
         <button id="addBtn" class="primary wide" title="New connection">＋<span class="lbl"> New connection</span></button>
-        <h6 class="lbl">Workspace</h6>
+        <div class="envbar lbl" title="Environment: its groups, servers and parameters"><select id="envSel" aria-label="Environment"></select><button id="envEditBtn" class="icon" type="button">⚙</button></div>
+        <h6 class="lbl navsec" data-sec="workspace">Workspace</h6>
+        <div class="navgrp" data-grp="workspace">
         <button class="navitem active" id="navAll" title="All Servers"><i>▤</i><span class="lbl">All Servers</span><span class="count lbl" id="navCount"></span></button>
         <button class="navitem" id="navFav" title="Favorites"><i>☆</i><span class="lbl">Favorites</span><span class="count lbl" id="favCount"></span></button>
         <button class="navitem" id="navUsers" title="Users"><i>👤</i><span class="lbl">Users</span><span class="count lbl" id="userCount"></span></button>
+        <button class="navitem" id="navEnvs" data-feature="envs" title="Environments: manage environments, their groups and servers"><i>🌐</i><span class="lbl">Environments</span><span class="count lbl" id="envCount"></span></button>
+        </div>
+        <h6 class="lbl navsec" data-sec="tools">Tools</h6>
+        <div class="navgrp" data-grp="tools">
         <button class="navitem" id="navDeploy" title="Deployments"><i>🚀</i><span class="lbl">Deployments</span></button>
-        <h6 class="lbl navhead">Groups <button id="newGroupBtn" class="icon" title="New group">＋</button></h6>
-        <div id="navGroups" class="navgroups"></div>
+        <button class="navitem" id="navScripts" title="Scripts"><i>{ }</i><span class="lbl">Scripts</span></button>
+        <button class="navitem" id="navBcast" title="Broadcast: type into many terminals at once"><i>📡</i><span class="lbl">Broadcast</span></button>
+        </div>
+        <h6 class="lbl navhead" hidden>Groups <button id="newGroupBtn" class="icon" title="New group">＋</button></h6>
+        <div id="navGroups" class="navgroups" hidden></div>
         <span class="grow"></span>
+        <button class="navitem" id="feedbackBtn" hidden title="Send feedback to the EranTerm team"><i>✉</i><span class="lbl">Feedback</span></button>
+        <button class="navitem" id="consoleBtn" title="Log Console: app log and Action Log (Ctrl/⌘ + Shift + L)"><i>›_</i><span class="lbl">Log Console</span></button>
         <button class="navitem" id="settingsBtn" title="Settings"><i>⚙</i><span class="lbl">Settings</span></button>
       </aside>
       <div class="content">
@@ -32,12 +43,14 @@
           <header class="pagehead">
             <h1 id="homeTitle">All Servers</h1><span class="badge" id="countBadge"></span>
             <span class="grow"></span>
+            <button id="srvImport" title="Import servers (.json)">⤒ Import</button>
+            <button id="srvExport" title="Export servers (.json, without passwords)">⤓ Export</button>
             <button id="collapseAll" title="Collapse all groups">⊟ Collapse all</button>
             <button id="expandAll" title="Expand all groups">⊞ Expand all</button>
             <input id="filter" class="search" placeholder="Search servers, IPs, users, tags…">
           </header>
           <table class="grid">
-            <thead><tr><th>Server</th><th>Type</th><th>Connection</th><th>Tags</th><th>Details</th><th>Alerts</th><th>Last seen</th><th class="r">Actions</th></tr></thead>
+            <thead><tr><th class="state">State</th><th>Server</th><th>Type</th><th>Connection</th><th>Tags</th><th>Details</th><th>Alerts</th><th>Last seen</th><th class="r">Actions</th></tr></thead>
             <tbody id="serverRows"></tbody>
           </table>
           <p id="emptyHome" class="empty">No servers yet. Click “New connection” to add one.</p>
@@ -49,10 +62,73 @@
             <h6>Deployments · <span class="dcount">0</span></h6>
             <button class="dnew primary">＋ New deployment</button>
             <ul class="dl"></ul>
+            <footer class="dfoot">
+              <button id="ftDeployCon" title="Show / hide the deployment console">›_ Deploy console</button>
+              <button id="ftDeployHist" title="Show / hide the deployments history panel">🕘 History</button>
+            </footer>
           </aside>
           <div class="deditor"></div>
+          <aside class="dhist">
+            <header><b>History</b><span class="grow"></span><button class="dh-clear linkbtn" title="Forget all history">Clear</button></header>
+            <ul class="dh-list"></ul>
+          </aside>
         </div>
 
+        </div>
+        <div id="scriptsView" hidden>
+          <header class="pagehead">
+            <h1>Scripts</h1><button id="scriptsManual" class="sc-help icon" title="Script writing manual (variables, multi-line, root)">?</button>
+            <span class="grow"></span>
+          </header>
+          <p class="muted">Saved commands you can run from any terminal (server Terminal → { } Scripts, or Broadcast). Use {{name}} for variables.</p>
+        </div>
+        <div id="envsView" hidden>
+          <header class="pagehead">
+            <h1>Environments</h1><span class="badge" id="envsBadge"></span>
+            <span class="grow"></span>
+            <input id="envsQ" class="search" placeholder="Search environments, groups, servers…">
+            <select id="envsSort" title="Sort environments">
+              <option value="">Sort: default</option><option value="name">Name</option><option value="servers">Most servers</option><option value="groups">Most groups</option>
+            </select>
+            <button id="envsFoldAll" title="Collapse all environments">⊟ Collapse all</button>
+            <button id="envsUnfoldAll" title="Expand all environments">⊞ Expand all</button>
+            <button id="envsNewGroup" title="New group">＋ New group</button>
+            <button id="envsNew" class="primary">＋ New environment</button>
+          </header>
+          <p class="muted">Each environment holds parameters, groups and servers. Change a group's environment with the selector on its row.</p>
+          <div id="envsList" class="envlist"></div>
+        </div>
+        <div id="bcastView" hidden>
+          <header class="pagehead">
+            <h1>Broadcast</h1><button id="bcastHelp" class="sc-help icon" title="How Broadcast works (manual)">?</button><span class="badge" id="bcastBadge"></span>
+            <span class="grow"></span>
+            <button id="bcastReconn" hidden title="Reconnect every Broadcast terminal that failed, dropped or is not connected yet"></button>
+            <div class="bcadd">
+              <button id="bcastAddBtn" title="Add a terminal to a saved server">＋ Add server… ▾</button>
+              <div id="bcastMenu" class="bcmenu" hidden>
+                <input id="bcastQ" class="search" placeholder="Filter: name, IP, user, group, tags, details…" autocomplete="off">
+                <div id="bcastTree"></div>
+              </div>
+            </div>
+            <button id="bcastLocal" title="Add a terminal on this computer (connect to anything by hand)">＋ localhost</button>
+            <select id="bcastSort" title="Order the terminals (localhost last). Drag a terminal's title bar to order by hand">
+              <option value="" selected disabled hidden>⇅ Sort by…</option>
+              <option value="group">Groups</option><option value="avail">Availability</option><option value="name">Name</option><option value="ip">IP</option>
+            </select>
+            <button id="bcastScripts" class="tscripts" title="Run a script on every checked terminal">{ } Scripts</button>
+          </header>
+          <div class="bcopts">
+            <label class="chk" title="On: what you type into a checked terminal goes to every checked terminal. Off: each terminal gets only what you type into it"><input type="checkbox" id="bcastOn" checked> Broadcast Active</label>
+            <label class="chk" title="Check or uncheck every terminal"><input type="checkbox" id="bcastAll"> Select all</label>
+            <span class="vbtns">
+              <button id="bcastShrink" class="vbtn icon" title="Shrink view: small terminals and text. Double-click a terminal to enlarge it for typing"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="3.6" height="3.6" rx=".6"/><rect x="6.2" y="1" width="3.6" height="3.6" rx=".6"/><rect x="11.4" y="1" width="3.6" height="3.6" rx=".6"/><rect x="1" y="6.2" width="3.6" height="3.6" rx=".6"/><rect x="6.2" y="6.2" width="3.6" height="3.6" rx=".6"/><rect x="11.4" y="6.2" width="3.6" height="3.6" rx=".6"/><rect x="1" y="11.4" width="3.6" height="3.6" rx=".6"/><rect x="6.2" y="11.4" width="3.6" height="3.6" rx=".6"/><rect x="11.4" y="11.4" width="3.6" height="3.6" rx=".6"/></svg></button>
+              <button id="bcastNormal" class="vbtn icon on" title="Normal view"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6.2" height="6.2" rx="1"/><rect x="8.8" y="1" width="6.2" height="6.2" rx="1"/><rect x="1" y="8.8" width="6.2" height="6.2" rx="1"/><rect x="8.8" y="8.8" width="6.2" height="6.2" rx="1"/></svg></button>
+            </span>
+            <label class="chk" title="Reopen these terminals next time the app starts (not connected until you click Reconnect all)"><input type="checkbox" id="bcastKeep"> Keep after restart</label>
+          </div>
+          <div class="bcbody">
+            <div id="bcastGrid" class="bcgrid"><p class="empty">Add servers or localhost terminals to start.</p></div>
+          </div>
         </div>
         <div id="usersView" hidden>
           <header class="pagehead">
@@ -71,12 +147,19 @@
     </section>
   </div>
 
+  <footer id="appFooter">
+    <button id="ftMenu" class="ftbig" title="Close / open the left menu" aria-label="Menu">☰</button>
+    <button id="ftSettings" class="ftbig" title="Settings" aria-label="Settings">⚙</button>
+    <span class="grow"></span>
+    <span id="ftAcct" class="ftacct"></span>
+  </footer>
+
   <!-- ===== Server page (cloned per connected server) ===== -->
   <template id="serverTpl">
     <section class="view server">
       <header class="srvhead">
         <button class="back icon" title="Back to Home">←</button>
-        <div class="srvid"><b class="sname"></b><small class="saddr mono"></small><small class="sdetails"></small></div>
+        <div class="srvid"><small class="sgroup" hidden></small><b class="sname"></b><small class="saddr mono"></small><small class="sdetails"></small></div>
         <span class="grow"></span>
         <span class="metrics mono">CPU <b class="mCpu">—</b> · Mem <b class="mMem">—</b> · Disk <b class="mDisk">—</b></span>
         <button class="status">CONNECTING…</button>
@@ -172,9 +255,9 @@
           <div class="fm">
             <div class="toolbar">
               <button class="up icon" title="Parent folder">↑</button>
-              <button class="homedir icon" title="Home folder">⌂</button>
+              <button class="homedir icon" title="Home folder"><svg class="tbi" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 3l9 8 M5 9.5V21h14V9.5 M9.5 21v-6.5h5V21"/></svg></button>
               <input class="path mono grow" spellcheck="false" title="Type a path and press Enter">
-              <button class="refresh icon" title="Refresh">⟳</button>
+              <button class="refresh icon" title="Refresh"><svg class="tbi" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8 M21 3v5h-5"/></svg></button>
             </div>
             <div class="toolbar">
               <input class="fsearch search" placeholder="Search this folder…">
@@ -227,28 +310,6 @@
             <p class="aiError error"></p>
           </section>
           </div>
-          <aside class="scripts" hidden>
-            <header>
-              <b>Scripts</b><span class="grow"></span>
-              <button class="sc-up icon" title="Import scripts (.json, .sh, .txt)">⤒</button>
-              <button class="sc-down icon" title="Export scripts (.json)">⤓</button>
-              <button class="sc-refresh icon" title="Refresh">⟳</button>
-              <button class="sc-add icon" title="New script">＋</button>
-              <button class="sc-close icon" title="Close">×</button>
-            </header>
-            <div class="sc-tools">
-              <input class="sc-filter search" placeholder="Search scripts…">
-              <select class="sc-sort" title="Order">
-                <option value="manual">My order</option>
-                <option value="name">Name A–Z</option>
-                <option value="recent">Recently run</option>
-              </select>
-            </div>
-            <div class="sc-tags"></div>
-            <small class="sc-hint muted"></small>
-            <ul class="sc-list"></ul>
-            <button class="sc-restore linkbtn" title="Re-add built-in scripts you deleted">↺ Restore built-in scripts</button>
-          </aside>
         </div>
 
         <!-- Logs -->
@@ -313,11 +374,46 @@
     </section>
   </template>
 
+  <!-- ===== Scripts panel (cloned into server Terminal, home Scripts, Broadcast) ===== -->
+  <template id="scriptsTpl">
+    <aside class="scripts">
+      <header>
+        <b>Scripts</b><span class="grow"></span>
+        <button class="sc-help icon" title="Script writing manual (variables, multi-line, root)">?</button>
+        <button class="sc-up icon" title="Import scripts (.json, .sh, .txt)">⤒</button>
+        <button class="sc-down icon" title="Export scripts (.json)">⤓</button>
+        <button class="sc-refresh icon" title="Refresh">⟳</button>
+        <button class="sc-add icon" title="New script">＋</button>
+        <button class="sc-close icon" title="Close">×</button>
+      </header>
+      <div class="sc-tools">
+        <input class="sc-filter search" placeholder="Search scripts…">
+        <select class="sc-sort" title="Order">
+          <option value="manual">My order</option>
+          <option value="name">Name A–Z</option>
+          <option value="recent">Recently run</option>
+        </select>
+      </div>
+      <label class="chk"><input type="checkbox" class="sc-hidebuiltin"> Hide built-in scripts</label>
+      <div class="sc-tagbar">
+        <select class="sc-tagmode" title="How the selected tags combine" hidden>
+          <option value="or">Any selected tag (OR)</option>
+          <option value="and">All selected tags (AND)</option>
+        </select>
+        <div class="sc-tags"></div>
+      </div>
+      <small class="sc-hint muted"></small>
+      <ul class="sc-list"></ul>
+      <button class="sc-restore linkbtn" title="Re-add built-in scripts you deleted">↺ Restore built-in scripts</button>
+    </aside>
+  </template>
+
   <div id="toast" hidden></div>
 
   <dialog id="serverDlg">
     <form method="dialog" id="serverForm">
       <h3>Server</h3>
+      <p class="hint team-note" id="serverTeamNote" hidden>Team server: only team admins can change its name, address, group and details. Your login, star and availability check are saved for you on this computer.</p>
       <input type="hidden" name="id">
       <label>Type
         <select name="type"><option value="ssh">SSH (Linux / macOS / Windows OpenSSH)</option><option value="rdp">RDP (Windows Remote Desktop)</option></select>
@@ -327,6 +423,7 @@
       <label><span class="portLabel">Port</span> <input name="port" type="number" value="22" min="1" max="65535"></label>
       <label class="rdp-only">SSH port (for Connect) <input name="sshPort" type="number" value="22" min="1" max="65535"></label>
       <label>Group <input name="group" list="groupList" placeholder="e.g. Production (type a new name to create one)"></label>
+      <label>Environment <select name="env"></select></label>
       <datalist id="groupList"></datalist>
       <label>Login
         <select name="userId"><option value="">Enter username / password below</option></select>
@@ -342,6 +439,7 @@
       <label>Tags <input name="tags" placeholder="prod, web"></label>
       <label>Details <textarea name="details" rows="3" placeholder="Free text: purpose, owner, notes…"></textarea></label>
       <label class="row"><input name="starred" type="checkbox"> Favorite</label>
+      <label class="row"><input name="probe" type="checkbox" checked> Check availability in the background (when on in Settings)</label>
       <menu><button value="cancel" formnovalidate>Cancel</button><button value="save" class="primary">Save</button></menu>
     </form>
   </dialog>
@@ -350,11 +448,27 @@
     <form method="dialog" id="scriptForm">
       <h3>Script</h3>
       <input type="hidden" name="id">
+      <div class="aibox">
+        <div class="laiForm">
+          <input id="scriptAiQ" autocomplete="off" placeholder="Ask AI: describe the script, e.g. back up /etc/nginx, then reload nginx if the config test passes">
+          <button type="button" id="scriptAiBtn" class="laiBtn" title="Plan or improve this script with AI (sends your request and the current script, not variable values)">✦ Ask AI</button>
+        </div>
+        <div id="scriptAiOut" class="aiOut" hidden></div>
+      </div>
       <label>Name <input name="name" required></label>
       <label>Description <input name="description"></label>
       <label>Tags <input name="tags" placeholder="comma separated, e.g. disk, linux"></label>
       <div id="scriptTagPick" class="sc-tags"></div>
       <label>Command or script <textarea name="command" class="mono" rows="9" required spellcheck="false" placeholder="df -h&#10;# multi-line scripts run with sh (or the #! interpreter)"></textarea></label>
+      <label class="row"><input name="root" type="checkbox"> Run as root <span class="qhelp" tabindex="0" data-tip="Runs the script through sudo. It asks for the password in the terminal unless sudo is passwordless for this user.">?</span></label>
+      <label class="row"><input name="confirm" type="checkbox"> Wait for Enter <span class="qhelp" tabindex="0" data-tip="Run only types the command into the terminal. Review it, then press Enter yourself to execute.">?</span></label>
+      <div class="varboxes">
+        <label>Local variables <small class="muted">— this script only</small>
+          <textarea name="localVars" class="mono" rows="4" spellcheck="false" placeholder="name=value&#10;port=8080"></textarea></label>
+        <label>Global variables <small class="muted">— shared by all scripts</small>
+          <textarea name="globalVars" class="mono" rows="4" spellcheck="false" placeholder="name=value&#10;env=prod"></textarea></label>
+      </div>
+      <p id="scriptVarHint" class="hint"></p>
       <menu><button value="cancel" formnovalidate>Cancel</button><button value="save" class="primary">Save</button></menu>
     </form>
   </dialog>
@@ -376,8 +490,37 @@
     <form method="dialog" id="groupForm">
       <h3 id="groupTitle"></h3>
       <label>Name <input name="name" required maxlength="100" autocomplete="off" placeholder="e.g. Production"></label>
+      <div class="cfield">Color <span id="groupColors"></span></div>
+      <label>Environment <select name="env"></select></label>
       <p id="groupInfo" class="muted"></p>
       <menu><button value="delete" class="gdel danger-btn" formnovalidate>Delete</button><span class="grow"></span><button value="cancel" formnovalidate>Cancel</button><button value="save" class="primary">Save</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="envDlg">
+    <form method="dialog" id="envForm">
+      <h3 id="envTitle"></h3>
+      <nav class="stabs">
+        <button type="button" data-tab="general">General</button>
+        <button type="button" data-tab="groups">Groups</button>
+        <button type="button" data-tab="params">Parameters</button>
+      </nav>
+      <section class="spane" data-pane="general">
+        <label>Name <input name="name" maxlength="100" autocomplete="off"></label>
+        <label>Description <textarea name="description" rows="2" maxlength="500" placeholder="What is this environment for? e.g. Production servers in EU"></textarea></label>
+        <div class="cfield">Color <span id="envColors"></span></div>
+        <p id="envShareInfo" class="muted"></p>
+      </section>
+      <section class="spane" data-pane="groups" hidden>
+        <div id="envGroups" class="envgroups"></div>
+        <button type="button" id="envNewGroup">＋ New group</button>
+      </section>
+      <section class="spane" data-pane="params" hidden>
+        <label>Parameters (one name=value per line)
+          <textarea name="vars" class="mono" rows="9" spellcheck="false" placeholder="db_host=10.0.0.5&#10;api_url=https://api.example.com"></textarea></label>
+        <p id="envKey" class="hint"></p>
+      </section>
+      <menu><button value="delete" class="edel danger-btn" formnovalidate>Delete</button><span class="grow"></span><button value="cancel" formnovalidate>Cancel</button><button value="save" class="esave primary">Save</button></menu>
     </form>
   </dialog>
 
@@ -398,16 +541,85 @@
     </form>
   </dialog>
 
+  <dialog id="feedbackDlg">
+    <form method="dialog" id="feedbackForm">
+      <h3>Send feedback</h3>
+      <p class="hint" id="feedbackWho"></p>
+      <textarea name="text" rows="8" maxlength="10000" placeholder="What works, what doesn't, what you'd like next…"></textarea>
+      <menu><button value="cancel" formnovalidate>Cancel</button><button value="send" class="primary">Send</button></menu>
+    </form>
+  </dialog>
+
   <dialog id="settingsDlg">
     <form method="dialog" id="settingsForm">
-      <h3>Settings</h3>
+      <header class="dlghead"><b>EranTerm &nbsp;Settings</b><button value="cancel" formnovalidate class="icon" title="Close without saving">✕</button></header>
+      <nav class="stabs">
+        <button type="button" data-tab="general">General</button>
+        <button type="button" data-tab="account">Account</button>
+        <button type="button" data-tab="team" hidden>Team</button>
+        <button type="button" data-tab="avail">Server Availability</button>
+        <button type="button" data-tab="updates">Updates</button>
+        <button type="button" data-tab="logging">Logging</button>
+        <button type="button" data-tab="ai">AI</button>
+        <button type="button" data-tab="notify">Notifications</button>
+        <button type="button" data-tab="flags" id="flagsTab" hidden>Feature flags</button>
+      </nav>
+      <section class="spane" data-pane="general" hidden>
       <label>Theme
         <select name="theme"><option value="system">System (follow macOS)</option><option value="light">Light</option><option value="dark">Dark</option></select>
       </label>
-      <h4 class="dlgsec">Updates</h4>
+      <label>Server connection default module
+        <select name="defaultPanel"><option value="files">File Manager</option><option value="term">Terminal</option><option value="logs">Logs</option><option value="stats">Metrics</option></select>
+      </label>
+      <label class="row"><input name="restoreTabs" type="checkbox"> Reopen the open server tabs when the app starts</label>
+      </section>
+      <section class="spane" data-pane="account" hidden>
+      <div id="acctBox"></div>
+      <div class="acctHelp">
+        <h4>What signing in does</h4>
+        <ul>
+          <li>Backs up your configuration to your own Google Drive, in a hidden app folder that is not shown with your Drive files.</li>
+          <li>Restores it on any computer where you sign in with the same account.</li>
+          <li>Is optional: without it, EranTerm works fully on this computer.</li>
+        </ul>
+        <h4>What is backed up</h4>
+        <ul>
+          <li>Servers, saved users, groups and environments</li>
+          <li>Scripts, variables and deployments</li>
+          <li>Settings</li>
+        </ul>
+        <h4>What never leaves this computer</h4>
+        <ul>
+          <li>Passwords and SSH keys</li>
+          <li>AI API keys</li>
+          <li>Logs, the Action Log and host keys</li>
+        </ul>
+      </div>
+      </section>
+      <section class="spane" data-pane="team" hidden>
+      <div id="teamBox"></div>
+      </section>
+      <section class="spane" data-pane="avail" hidden>
+      <label class="row inl"><input name="availOn" type="checkbox"> Check servers in the background, every <input name="availSec" type="number" min="10" step="10" class="num"> s</label>
+      <p class="hint">A quick TCP connect to each SSH / desktop port, 2 s timeout. Turn it off per server in its Edit dialog.</p>
+      </section>
+      <section class="spane" data-pane="updates" hidden>
       <label class="row"><input name="autoUpdate" type="checkbox"> Update automatically when a new release is published</label>
       <p class="hint" id="updHint"></p>
-      <h4 class="dlgsec">AI configuration</h4>
+      </section>
+      <section class="spane" data-pane="logging" hidden>
+      <label class="row"><input name="logToFile" type="checkbox"> Save the app log to a file (eranterm.log)</label>
+      <label>Log folder
+        <span class="modelrow">
+          <input name="logDir" spellcheck="false" autocomplete="off">
+          <button type="button" id="logPick">Choose…</button>
+          <button type="button" id="logOpen" title="Open the log folder">Open</button>
+        </span>
+      </label>
+      <button type="button" id="logConsole">Open Log Console</button>
+      <p class="hint">Connections, errors and update checks. Passwords and keys are never logged. Live view and the Action Log (audit trail): Help → Log Console (Ctrl/⌘ + Shift + L).</p>
+      </section>
+      <section class="spane" data-pane="ai" hidden>
       <label>Provider <select name="aiProvider"></select></label>
       <p id="keyStatus" class="hint"></p>
       <label><span id="keyLabel">API key</span> <input name="apiKey" type="password" placeholder="leave blank to keep the saved key" autocomplete="off"></label>
@@ -420,8 +632,17 @@
         </span>
       </label>
       <datalist id="aiModelList"></datalist>
+      <p class="hint">Used by Ask AI in Terminal, Logs and the script editor. Each provider keeps its own key, encrypted with your macOS Keychain. Logs and terminal text are sent to the selected provider only when you click Ask AI.</p>
+      </section>
+      <section class="spane" data-pane="notify" hidden>
+      <label class="row"><input name="notify" type="checkbox"> Show desktop notifications</label>
+      <p class="hint">Native OS popups: server down / back up, deployment finished, metric alerts.</p>
+      </section>
+      <section class="spane" data-pane="flags" hidden>
+      <p class="hint">Hide features that are still being built. Changes apply right away.</p>
+      <div id="flagsList"></div>
+      </section>
       <p id="aiMsg" class="hint"></p>
-      <p class="hint">Used by Ask AI in Terminal and Logs. Each provider keeps its own key, encrypted with your macOS Keychain. Logs and terminal text are sent to the selected provider only when you click Ask AI.</p>
       <menu><button value="cancel" formnovalidate>Cancel</button><button value="save" class="primary">Save</button></menu>
     </form>
   </dialog>

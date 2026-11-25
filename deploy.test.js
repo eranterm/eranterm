@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
-const { runDeployment } = require('./deploy');
+const { runDeployment, toSteps } = require('./deploy');
 
 const localSession = () => ({
   exec: (script, onData) => new Promise(resolve => {
@@ -28,7 +28,7 @@ async function run(dep, targets) {
 }
 
 // Windows temp paths (C:\...) don't survive the Unix-shell log check; deploy targets Unix servers.
-test('full deployment: pre, files, deploy checks, post alert', { skip: process.platform === 'win32' && 'needs a Unix shell' }, async () => {
+test('full deployment: commands, files, checks, alert-only check', { skip: process.platform === 'win32' && 'needs a Unix shell' }, async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'eraterm-'));
   const src = path.join(tmp, 'app.conf');
   fs.writeFileSync(src, 'x=1');
@@ -40,19 +40,17 @@ test('full deployment: pre, files, deploy checks, post alert', { skip: process.p
   const port = srv.address().port;
 
   const { status, logs, events } = await run({
-    files: [{ local: src, remoteDir: dest }],
-    stages: {
-      pre: { commands: ['echo pre-ok'], checks: [{ type: 'exit', command: 'true', onFail: 'stop' }] },
-      deploy: {
-        commands: [`echo "INFO service started on ${port}" >> ${logFile}`],
-        checks: [
-          { type: 'log', file: logFile, pattern: 'started on [0-9]+', expect: 'present', onFail: 'stop' },
-          { type: 'log', file: logFile, pattern: 'ERROR', expect: 'absent', onFail: 'stop' },
-          { type: 'port', host: '127.0.0.1', port, onFail: 'stop' },
-        ],
-      },
-      post: { commands: [], checks: [{ type: 'exit', command: 'exit 3', onFail: 'alert' }] },
-    },
+    steps: [
+      { type: 'command', command: 'echo pre-ok' },
+      { type: 'check', check: { type: 'exit', command: 'true', onFail: 'stop' } },
+      { type: 'files', files: [{ local: src, remoteDir: dest }] },
+      { type: 'command', command: '' }, // empty: skipped
+      { type: 'command', command: `echo "INFO service started on ${port}" >> ${logFile}` },
+      { type: 'check', check: { type: 'log', file: logFile, pattern: 'started on [0-9]+', expect: 'present', onFail: 'stop' } },
+      { type: 'check', check: { type: 'log', file: logFile, pattern: 'ERROR', expect: 'absent', onFail: 'stop' } },
+      { type: 'check', check: { type: 'port', host: '127.0.0.1', port, onFail: 'stop' } },
+      { type: 'check', check: { type: 'exit', command: 'exit 3', onFail: 'alert' } },
+    ],
   }, [{ id: 'a', name: 'A', host: '127.0.0.1' }]);
   srv.close();
 
@@ -61,7 +59,7 @@ test('full deployment: pre, files, deploy checks, post alert', { skip: process.p
   assert.match(logs, /pre-ok/);
   assert.match(logs, /matched: INFO service started/);
   const stages = events.filter(e => e.kind === 'stage' && e.state !== 'running').map(e => `${e.stage}:${e.state}`);
-  assert.deepStrictEqual(stages, ['pre:ok', 'files:ok', 'deploy:ok', 'post:warn']);
+  assert.deepStrictEqual(stages, ['s0:ok', 's1:ok', 's2:ok', 's4:ok', 's5:ok', 's6:ok', 's7:ok', 's8:warn']);
 });
 
 test('failing stop-check fails the server and skips the rest (sequential)', async () => {
@@ -94,4 +92,13 @@ test('failing command stops; files-only deployment works; retry waits for port',
   const late = await run({ stages: { post: { commands: [], checks: [{ type: 'port', host: '127.0.0.1', port, timeout: 6, onFail: 'stop' }] } } },
     [{ id: 'a', name: 'A', host: 'h' }]);
   assert.strictEqual(late.status('a'), 'success', late.logs);
+});
+
+test('old stage-based deployments convert to steps in pre, files, deploy, post order', () => {
+  const steps = toSteps({
+    files: [{ local: '/a', remoteDir: '/b' }],
+    stages: { post: { commands: ['p'], checks: [] }, pre: { commands: ['a'], checks: [{ type: 'exit', command: 'true' }] }, deploy: { commands: ['d'], checks: [] } },
+  });
+  assert.deepStrictEqual(steps.map(s => s.type + ':' + (s.command || s.check?.type || s.files.length)),
+    ['command:a', 'check:exit', 'files:1', 'command:d', 'command:p']);
 });

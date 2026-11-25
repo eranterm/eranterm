@@ -21,27 +21,55 @@
   nav a { display: block; color: var(--accent); text-decoration: none; }
   a { color: var(--accent); }
   kbd, code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Menlo, monospace; }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow: auto; }
+  pre code { border: 0; padding: 0; background: none; }
   .note { border-left: 3px solid var(--accent); background: var(--panel); padding: 8px 12px; border-radius: 0 6px 6px 0; }
+  header.top { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 8px 24px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header.top .logo { font-weight: 700; font-size: 18px; letter-spacing: -.02em; color: var(--fg); text-decoration: none; }
+  header.top .logo span { color: var(--accent); }
+  header.top .menu { display: flex; align-items: center; gap: 4px; }
+  header.top .menu a, header.top .menu button { color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; text-decoration: none; }
+  header.top .menu a:hover, header.top .menu button:hover { background: var(--bg); color: var(--accent); }
+  header.top input { width: 220px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; font: inherit; }
+  header.top input:focus { outline: 0; border-color: var(--accent); }
+  header.top .grow { flex: 1; }
+  h2, nav { scroll-margin-top: 56px; }
 </style>
 </head>
 <body>
+<header class="top">
+  <a class="logo" href="#" title="Top">Eran<span>Term</span> <small class="muted">Manual</small></a>
+  <span class="menu">
+    <a href="#toc" title="Table of contents">☰ Contents</a>
+    <button id="print" title="Print or save as PDF">⎙ Print</button>
+  </span>
+  <span class="grow"></span>
+  <input id="q" type="search" placeholder="Search the manual…  (Enter = next, Shift+Enter = previous)" autocomplete="off">
+  <span class="menu"><button id="close" title="Close the manual (Esc)">✕ Close</button></span>
+</header>
 <main>
   <h1 class="brand">Eran<span>Term</span></h1>
   <p class="muted">User Manual. A local-first desktop manager for your servers: terminals, files, logs, metrics, deployments, and an AI assistant that only runs what you approve.</p>
 
-  <nav>
+  <nav id="toc">
     <a href="#start">Getting started</a>
     <a href="#home">Home: servers &amp; groups</a>
     <a href="#users">Users (saved logins)</a>
     <a href="#rdp">Windows &amp; RDP</a>
     <a href="#files">File Manager</a>
     <a href="#term">Terminal &amp; scripts</a>
+    <a href="#scripting">Writing scripts (variables)</a>
+    <a href="#broadcast">Broadcast (many terminals)</a>
     <a href="#logs">Logs</a>
     <a href="#metrics">Metrics &amp; alerts</a>
     <a href="#deploy">Deployments</a>
     <a href="#ai">AI assistant</a>
     <a href="#settings">Settings &amp; updates</a>
+    <a href="#account">Google account &amp; backup</a>
+    <a href="#team-setup">Setup: Google sign-in</a>
     <a href="#security">Security &amp; data</a>
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="terms.html">Terms &amp; Conditions</a>
   </nav>
 
   <h2 id="start">Getting started</h2>
@@ -49,15 +77,21 @@
     <li>Click <b>＋ New connection</b> on the Home page.</li>
     <li>Choose the type (<b>SSH</b> or <b>RDP</b>), then enter the host, port, and login: a username with a password or private key, or a saved <a href="#users">User</a>.</li>
     <li>Optionally set a group, tags, details, and mark it as a favorite. Then click <b>Save</b>.</li>
-    <li>Click <b>Connect</b> on the server. Each connection opens in its own tab at the top of the window. <b>⌂ Home</b> always takes you back.</li>
+    <li>Click <b>▶ SSH</b> on the server. Each connection opens in its own tab at the top of the window, on the module chosen in <a href="#settings">Settings</a> (File Manager by default). <b>⌂ Home</b> always takes you back. Drag tabs to reorder them. If a connection fails or drops, <b>⟳ Reconnect failed</b> appears at the right of the tab row and reconnects all of them in place. A server's group is shown above its name at the top of its page.</li>
   </ol>
-  <p class="note">The first time you connect, EranTerm remembers the server's host key. If that key changes later, you're asked before EranTerm trusts the new one.</p>
+  <p>The <b>+</b> at the right of the tab row opens a <b>localhost</b> tab: a terminal on this computer (your login shell), with terminal sessions, scripts and AI like any server. It has no File Manager, Logs or Metrics. Available on macOS and Linux.</p>
+  <p class="note">The first time you connect, EranTerm remembers the server's host key. If that key changes later, EranTerm accepts the new one and warns you, so you can check it was expected (for example after a reinstall).</p>
 
   <h2 id="home">Home: servers &amp; groups</h2>
   <ul>
     <li><b>Search</b> filters by name, IP, user, or tag.</li>
     <li><b>All Servers</b>, <b>Favorites</b>, and each <b>group</b> in the side menu filter the table. Click a column header to sort.</li>
     <li><b>Groups</b>: click <b>＋</b> next to <i>Groups</i> to create one, or type a new group name when you edit a server. You can rename or delete a group from its row; deleting a group keeps its servers.</li>
+    <li><b>Group colors</b>: in the group's Edit dialog, pick a soft color (or none). It tints the group's row on Home, its entry in the side menu, and the tabs of that group's servers.</li>
+    <li>The <b>State</b> column shows whether the server answers: <b>green</b> = available, <b>red</b> = not available, <b>grey</b> = not checked yet. Hover the dot for the date and time of the last check.</li>
+    <li>The <b>▶ SSH</b> and <b>🖥 Desktop</b> buttons (RDP, VNC or Screen Sharing) each show a dot for their own protocol: green when its port answers, red when it doesn't. Hover for the time of the check.</li>
+    <li>Checks run in the background and never slow down the app or your connections: one quick TCP connection per port, 2 s timeout, every minute by default. Change the interval or turn checking off in <a href="#settings">Settings → Server Availability</a>; turn it off for one server with <b>Check availability</b> in its Edit dialog.</li>
+    <li>When a server goes down or comes back up, you get a desktop notification (see <a href="#settings">Settings → Notifications</a>).</li>
     <li>The <b>Alerts</b> column shows servers that are over a CPU, memory, or disk limit you set (see <a href="#metrics">Metrics</a>).</li>
     <li><b>‹</b> folds the side menu down to icons.</li>
   </ul>
@@ -68,7 +102,7 @@
   <h2 id="rdp">Windows &amp; RDP</h2>
   <ul>
     <li><b>Desktop</b> opens Remote Desktop: <i>Windows App</i> on macOS (from the Mac App Store), or <code>mstsc</code> on Windows. A saved password is copied to the clipboard for the login prompt and cleared after 45 seconds.</li>
-    <li><b>Connect</b> uses Windows OpenSSH with the same login (<code>DOMAIN\user</code> when you set a domain), so you also get the terminal, files, logs (from PowerShell), and metrics.</li>
+    <li><b>▶ SSH</b> uses Windows OpenSSH with the same login (<code>DOMAIN\user</code> when you set a domain), so you also get the terminal, files, logs (from PowerShell), and metrics.</li>
   </ul>
 
   <h2 id="files">File Manager</h2>
@@ -83,7 +117,60 @@
   <ul>
     <li>A full shell. You can open several sessions per server.</li>
     <li>As you type, command suggestions come from this server's history and from common commands.</li>
-    <li><b>Scripts</b>: a searchable library of commands and multi-line scripts, with tags. Click one to run it in the terminal. You can import and export scripts (<code>.json</code>, <code>.sh</code>, <code>.txt</code>), and re-add any built-in scripts you deleted.</li>
+    <li><b>Scripts</b>: a searchable library of commands and multi-line scripts, with tags. Click one to run it in the terminal. Scripts can use <a href="#scripting">variables</a>; manage them all in <b>Scripts</b> on the Home page. You can import and export scripts (<code>.json</code>, <code>.sh</code>, <code>.txt</code>), and re-add any built-in scripts you deleted. Tick <b>Run as root</b> on a script to run it with <code>sudo</code> (marked 🔒); sudo asks for the password in the terminal unless the user has passwordless sudo. Tick <b>Wait for Enter</b> (marked ⏎) to have Run type the script into the terminal without executing it; press Enter to run it. <b>Hide built-in scripts</b> shows only the scripts you added; the choice is remembered.</li>
+  </ul>
+
+  <h2 id="scripting">Writing scripts</h2>
+  <p>Manage scripts in <b>Scripts</b> on the Home page (or <b>{ } Scripts</b> in any terminal). Run them from a server Terminal or from <a href="#broadcast">Broadcast</a>.</p>
+  <h3>One line or many</h3>
+  <ul>
+    <li>A one-line script is typed into the terminal as is, followed by Enter: <code>df -h</code>.</li>
+    <li>A multi-line script runs as one script through <code>sh</code>, so loops, <code>if</code> blocks and functions work. Start it with a <code>#!</code> line to pick another interpreter, for example <code>#!/bin/bash</code> or <code>#!/usr/bin/env python3</code>.</li>
+    <li><b>Run as root</b> runs it with <code>sudo</code>. <b>Wait for Enter</b> types it without running it, so you can check it first.</li>
+  </ul>
+  <h3>Ask AI</h3>
+  <ul>
+    <li>At the top of the New / Edit script form, describe what the script should do (or what to change in the current one) and click <b>✦ Ask AI</b> or press Enter.</li>
+    <li>The AI returns a proposal: a short plan, the script, suggested local variables and a risk level. Nothing changes until you click <b>Apply to form</b>.</li>
+    <li>Apply replaces the script text, adds the suggested local variables, sets Run as root, and fills Name, Description and Tags only if they are empty. Review it before saving.</li>
+    <li>Your request, the current name, description and script, and the <i>names</i> of your variables are sent to the AI provider set in Settings → AI configuration. Variable values are not sent.</li>
+  </ul>
+  <h3>Variables</h3>
+  <p>Write <code>{{name}}</code> anywhere in a script. When you click Run, EranTerm replaces it with the variable's value. Names use letters, digits and <code>_</code>, and start with a letter or <code>_</code>.</p>
+  <ul>
+    <li><b>Local variables</b> belong to one script. Set them in that script's <i>Local variables</i> box.</li>
+    <li><b>Global variables</b> are one list shared by every script. The <i>Global variables</i> box shows the same list in every script; changing it there changes it for all scripts.</li>
+    <li>If a script has a local variable with the same name as a global one, the local value wins.</li>
+    <li>Write one variable per line as <code>name=value</code>. Blank lines and lines starting with <code>#</code> are ignored. Everything after the first <code>=</code> is the value (spaces at both ends are trimmed).</li>
+    <li>The value is inserted as plain text, exactly as written. Add quotes in the script if a value may contain spaces: <code>cd "{{app_dir}}"</code>.</li>
+    <li>A <code>{{name}}</code> with no value is left as is and you get a warning. The editor shows which variables a script uses and which are missing.</li>
+    <li>Template syntax such as Docker's <code>{{.Names}}</code> or <code>{{json .Config}}</code> is not a variable and is never changed.</li>
+    <li>When you copy a library script into a <a href="#deploy">Deployment</a>, its variables are filled in at that moment.</li>
+  </ul>
+  <p>Example. Global: <code>env=staging</code>. Local: <code>service=nginx</code> and <code>lines=50</code>. Script:</p>
+  <pre><code>#!/bin/bash
+echo "[{{env}}] restarting {{service}}"
+sudo systemctl restart {{service}}
+journalctl -u {{service}} -n {{lines}} --no-pager</code></pre>
+  <h3>Tags and filtering</h3>
+  <ul>
+    <li>Give scripts comma-separated tags. Click tags above the list to filter.</li>
+    <li>With two or more tags selected, choose how they combine: <b>Any selected tag (OR)</b> shows scripts that have at least one of them; <b>All selected tags (AND)</b> shows only scripts that have every one. The choice is remembered.</li>
+  </ul>
+
+  <h2 id="broadcast">Broadcast</h2>
+  <p>Type the same thing into many terminals at once. Open <b>Broadcast</b> on the Home page.</p>
+  <ul>
+    <li><b>＋ Add server…</b> opens a terminal to a saved server. <b>＋ localhost</b> opens a terminal on this computer; add as many as you like, for example to <code>ssh</code> to machines that are not saved.</li>
+    <li>Every key you type in a <b>checked</b> terminal (including Ctrl keys, arrows and paste) goes to all checked terminals. Checked terminals have a green border.</li>
+    <li>Uncheck a terminal to type into it alone, for example to answer a password prompt on one server. Turn off <b>Broadcast Active</b> to type into each terminal separately.</li>
+    <li><b>{ } Scripts</b> runs a script on every checked terminal, with its variables filled in.</li>
+    <li>Each terminal has its own connection; closing it (×) disconnects only that one.</li>
+    <li>A terminal whose connection failed or dropped, or whose shell ended, gets a red border. Click its <b>⟳</b> to reconnect it in place (the checkbox and position stay). <b>⟳ Reconnect all (n)</b> at the top reconnects every failed or not-yet-connected Broadcast terminal at once; it only touches Broadcast, not server tabs.</li>
+    <li>Order the terminals by dragging a terminal's title bar onto another position (works in normal and Minimized view), or use the <b>⇅ Sort by…</b> menu (Groups, Availability, Name, IP; localhost last). Groups follows the Home page order. The title bar takes its group's color.</li>
+    <li>The dot before each terminal's name shows the server's availability (green = up, red = not answering, grey = not checked).</li>
+    <li>The <b>Shrink view</b> button (9 small squares) shrinks every terminal and its text so many fit on screen. Double-click a terminal to enlarge it for typing (the rest stay small); double-click it again, or another one, to switch. Click <b>Normal view</b> (4 squares) to return all to normal.</li>
+    <li><b>Keep after restart</b> reopens the same Broadcast terminals (and their checkboxes) next time the app starts. They are not connected automatically: click <b>⟳ Reconnect all</b> to connect them.</li>
   </ul>
 
   <h2 id="logs">Logs</h2>
@@ -102,41 +189,109 @@
   </ul>
 
   <h2 id="deploy">Deployments</h2>
-  <p>A deployment runs the same steps on many servers, one at a time or in parallel. Stages with nothing in them are skipped.</p>
+  <p>A deployment runs the same steps on many servers, one at a time or in parallel. You build it as a flow:</p>
   <ol>
-    <li><b>Pre-deploy</b>: backups, stopping services, sanity checks.</li>
-    <li><b>Files</b>: copied to every target server. Folders keep their structure.</li>
-    <li><b>Deploy</b>: install and configure.</li>
-    <li><b>Post-deploy</b>: restart services, smoke tests, cleanup.</li>
+    <li><b>Target servers</b> come first (see below).</li>
+    <li>Then add steps in the order they should run, with <b>＋ Command / script</b>, <b>＋ Verification</b> and <b>＋ Files</b>. <b>⧉ Repeat last step</b> adds a copy of the last one. Each step can be moved up or down, duplicated or removed.</li>
   </ol>
-  <p>Each stage can include checks: a <b>log check</b> (a pattern is present or absent), a <b>TCP port</b> check, or a <b>script exit code</b> check. For each check, choose whether a failure stops the deployment or only raises an alert. You can follow each server's progress live, and reopen the last run's results afterwards.</p>
+  <ul>
+    <li><b>Command / script</b>: a command or a multi-line script (<code>#!/bin/bash</code> supported), typed or taken from the script library. A non-zero exit code fails that server.</li>
+    <li><b>Verification</b>: a <b>log check</b> (a pattern is present or absent), a <b>TCP port</b> check, or a <b>script exit code</b> check, with an optional wait time. Choose whether a failure stops the deployment or only raises an alert.</li>
+    <li><b>Files</b>: files and folders copied to every target server. Folders keep their structure.</li>
+  </ul>
+  <p>The strip at the top of the builder draws the whole flow: servers → each step → Done. Empty steps are shown dashed and are skipped when the deployment runs. Click a step in the strip to jump to it.</p>
+  <p>While it runs, each server shows every step of the flow with its status. You can follow it live and reopen the last run's results afterwards. Deployments saved by older versions (Pre-deploy / Files / Deploy / Post-deploy) open as steps in that same order.</p>
+  <ul>
+    <li><b>Target servers</b>: narrow the list by <b>group</b> or by typing (name, host, tag or details), then use <b>Select shown</b> / <b>Clear shown</b>. Filtering never changes servers you've already selected.</li>
+    <li><b>■ Stop</b> ends the run right away: commands still running on the servers are stopped (with their child processes), and servers not started yet are skipped.</li>
+    <li>You get a desktop notification when a deployment finishes.</li>
+  </ul>
 
   <h2 id="ai">AI assistant</h2>
   <ul>
     <li>In the <b>Terminal</b>, describe what you want, and the AI suggests a command. Nothing runs until you approve it.</li>
     <li><b>Ask AI</b> in Terminal or Logs analyzes what's on screen, or the log lines that are currently shown.</li>
-    <li>Set it up in <b>Settings → AI configuration</b>: choose a provider (Anthropic, OpenAI, or Gemini), paste an API key, and pick a model. <b>Test</b> checks the key without saving it.</li>
+    <li>Set it up in <b>Settings → AI</b>: choose a provider (Anthropic, OpenAI, Gemini or Cursor), paste an API key, and pick a model (<b>Load models</b> asks the provider for its current list). <b>Test</b> checks the key without saving it.</li>
+    <li><b>Cursor</b> runs the Cursor CLI on this computer (<code>cursor-agent</code>; install with <code>curl https://cursor.com/install -fsS | bash</code>). The API key is optional: without one it uses your <code>cursor-agent login</code>. Model <code>auto</code> lets Cursor choose.</li>
     <li>Text is sent to the provider only when you click Ask AI or request a command.</li>
   </ul>
 
   <h2 id="settings">Settings &amp; updates</h2>
+  <p>Settings is split into tabs.</p>
+  <h3>General</h3>
   <ul>
     <li><b>Theme</b>: System, Light, or Dark.</li>
+    <li><b>Server connection default module</b>: the module a server opens on when you connect: File Manager (default), Terminal, Logs or Metrics.</li>
+    <li><b>Reopen the open server tabs when the app starts</b>: the tabs open when you quit (in their order, including localhost) reconnect at the next start. Off by default.</li>
+  </ul>
+  <h3>Server Availability</h3>
+  <ul>
+    <li>Turn background checks on or off for all servers, and set how often they run (seconds, default 60), on one line.</li>
+  </ul>
+  <h3>Updates</h3>
+  <ul>
     <li><b>Update automatically</b>: EranTerm checks for a new release at startup and every 6 hours.
       <ul>
         <li><b>Windows</b>: the update downloads in the background. Restart when you're asked, or it installs the next time you quit.</li>
         <li><b>macOS</b>: you're offered the download page. Open the new <code>.dmg</code> and drag EranTerm into Applications.</li>
       </ul>
     </li>
+  </ul>
+  <h3>Logging</h3>
+  <ul>
+    <li>Optionally save the app log to <code>eranterm.log</code> in a folder you choose (default: <code>~/Library/Logs/EranTerm</code> on macOS).</li>
+    <li><b>Log Console</b>: open it with the <b>›_ Log Console</b> button in the side menu, from Settings, or with <kbd>Ctrl/⌘ + Shift + L</kbd>. It has two tabs:
+      <ul>
+        <li><b>▤ Log</b>: a live view of the app log, with a filter and a level picker. <b>Debug level</b> also logs every internal call and extra detail; it is off by default and turns off again when the app restarts.</li>
+        <li><b>★ Action Log</b>: the audit trail. Every server, user, group, script and deployment you create, change or delete; settings changes; connections and remote desktops; file uploads, downloads, deletes and new folders; killed processes; maintenance actions; and deployment runs. Each row has the time, the action, the target, details and whether it worked (failed actions show the error in red). Filter by text or action type, show failed actions only, or <b>Copy CSV</b>. The Action Log is saved in <code>actions.jsonl</code> in the data folder and kept across restarts. Passwords, keys and file contents are never recorded.</li>
+      </ul>
+    </li>
+  </ul>
+  <h3>AI</h3>
+  <ul>
+    <li>Provider, API key and model: see <a href="#ai">AI assistant</a>.</li>
+  </ul>
+  <h3>Notifications</h3>
+  <ul>
+    <li>Desktop (OS) notifications for: a server going down or coming back up, a deployment finishing, and metric alerts. On by default.</li>
+  </ul>
+  <ul>
     <li><b>Help → Version</b> shows your version. <b>Help → Check for Updates…</b> checks right away. <b>Help → User Manual</b> (<kbd>F1</kbd>) opens this page.</li>
   </ul>
+
+  <h2 id="account">Google account &amp; backup</h2>
+  <p>Sign in with your own Google account (Gmail or a company account) in <b>Settings → Account</b>. Signing in is optional; without it EranTerm works as before, all on this computer.</p>
+  <ul>
+    <li><b>Backup to your Google Drive</b>: once signed in, your servers, saved users, groups, scripts, global variables, deployments, environments and settings are saved to your own Google Drive a few seconds after each change. They go to a hidden app folder: only EranTerm can see it, and it does not appear among your Drive files.</li>
+    <li><b>Other computers</b>: sign in with the same Google account and everything comes back. If both computers changed things, EranTerm asks which copy to keep.</li>
+    <li><b>Never backed up</b>: passwords, SSH keys and AI API keys. Enter them once on each computer. Logs, the Action Log and host keys also stay local.</li>
+    <li><b>Backup now</b> (Settings → Account) uploads this computer's configuration right away; <b>Restore from backup</b> replaces this computer's configuration with the saved copy. <b>Automatic backup</b> can run on every change and/or daily or weekly. EranTerm also checks at startup. <b>Sign out</b> keeps everything on this computer.</li>
+    <li>To remove the backup: Google Drive → ⚙ Settings → <b>Manage apps</b> → EranTerm → <b>Delete hidden app data</b>.</li>
+  </ul>
+  <p><b>Coming next</b>: team sharing (a team file in an admin's Google Drive, shared with the team) and in-app feedback.</p>
+
+  <h2 id="team-setup">One-time setup: Google sign-in</h2>
+  <p>For whoever builds EranTerm for the team, once. Google requires any app with "Sign in with Google" to be registered as an OAuth client. The registration holds <b>no user data</b>: each user's backup lives in their own Drive. Any Google account can own it. Until it's done, <b>Settings → Account</b> says sign-in is not set up.</p>
+  <ol>
+    <li>Go to <b>console.cloud.google.com</b> and create a project (e.g. <b>EranTerm</b>).</li>
+    <li><b>APIs &amp; Services → Library</b>: search for <b>Google Drive API</b> and click <b>Enable</b>.</li>
+    <li>Open <b>Google Auth Platform</b> (the OAuth consent screen):
+      <ul>
+        <li><b>Branding</b>: app name <code>EranTerm</code> and your email.</li>
+        <li><b>Audience</b>: <b>External</b>, then <b>Publish app</b> (so it is "In production"; in "Testing" sign-ins expire every 7 days).</li>
+        <li><b>Data access</b>: add <code>openid</code>, <code>email</code> and <code>.../auth/drive.appdata</code> (the app's own hidden Drive folder only).</li>
+      </ul></li>
+    <li><b>Clients → Create client → Desktop app</b>, name <code>EranTerm desktop</code>. Put the <b>Client ID</b> and <b>Client secret</b> in <code>CONFIG</code> at the top of <code>cloud.js</code>, then build. They are not secrets: desktop apps ship them by design.</li>
+    <li>In EranTerm: <b>Settings → Account → Sign in with Google</b>. If Google shows "Google hasn't verified this app", click <b>Advanced → Go to EranTerm</b>.</li>
+  </ol>
 
   <h2 id="security">Security &amp; data</h2>
   <ul>
     <li>Passwords and API keys are encrypted with your OS keychain and never leave your machine, except when they're used to log in or to call the AI provider.</li>
-    <li>Everything is stored locally: servers, users, groups, scripts, and settings. Nothing is synced to a cloud.</li>
+    <li>Everything is stored locally. If you sign in with Google, a copy of your configuration (without passwords or keys) is kept in your own Google Drive (see <a href="#account">Google account &amp; backup</a>).</li>
     <li>Host keys are pinned after the first connection.</li>
   </ul>
 </main>
+<script src="manual.js"></script>
 </body>
 </html>

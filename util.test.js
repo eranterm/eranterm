@@ -131,3 +131,30 @@ test('remoteDir', () => {
   assert.strictEqual(sh(remoteDir('/opt/$(x)')), '/opt/$(x)');
   assert.strictEqual(sh(remoteDir('')), '/home/me');
 });
+
+test('parseCliModels reads cursor-agent model lists', () => {
+  const { parseCliModels } = require('./util');
+  const out = '\x1b[1mAvailable models\x1b[0m\n\n  * auto (current)\n  - gpt-5   GPT-5\n  sonnet-4.5 - Claude\n\nTip: use --model <id>\n';
+  assert.deepStrictEqual(parseCliModels(out), ['auto', 'gpt-5', 'sonnet-4.5']);
+});
+
+test('script variables: parse, local over global, unknown and go templates left alone, run keys', () => {
+  const { parseVars, varsText, fillVars, scriptKeys } = require('./util');
+  const v = parseVars('# c\nhost = web1\n\nport=80 \nbad line\n');
+  assert.deepStrictEqual(v, { host: 'web1', port: '80' });
+  assert.strictEqual(varsText(v), 'host=web1\nport=80');
+  const r = fillVars('curl {{host}}:{{ port }}/{{path}} {{.Names}} {{json .X}}', { port: '8080' }, { host: 'g', port: '1' });
+  assert.strictEqual(r.text, 'curl g:8080/{{path}} {{.Names}} {{json .X}}');
+  assert.deepStrictEqual(r.missing, ['path']);
+  assert.strictEqual(scriptKeys('df -h'), 'df -h\r');
+  assert.strictEqual(scriptKeys('df -h', { confirm: true }), 'df -h');
+  assert.strictEqual(scriptKeys('a\nb', { root: true }), "sudo sh -s <<'ERATERM_SCRIPT'\ra\rb\rERATERM_SCRIPT\r");
+});
+
+test('script variables: environment layer and {{envkey.name}}', () => {
+  const { fillVars } = require('./util');
+  const r = fillVars('{{a}} {{b}} {{c}} {{prod.db}} {{dev.db}} {{x.y}}', { a: 'L' }, { a: 'G', b: 'G', c: 'G' }, { a: 'E', b: 'E' },
+    { prod: { db: 'p1' }, dev: {} });
+  assert.strictEqual(r.text, 'L E G p1 {{dev.db}} {{x.y}}');
+  assert.deepStrictEqual(r.missing, ['dev.db', 'x.y']);
+});
