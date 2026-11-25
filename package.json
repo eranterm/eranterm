@@ -1,7 +1,7 @@
 {
   "name": "eraterm",
   "productName": "EranTerm",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "private": true,
   "description": "Local-first desktop SSH server manager with an approve-before-run AI terminal",
   "main": "main.js",
